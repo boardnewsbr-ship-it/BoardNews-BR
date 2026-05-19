@@ -1,0 +1,40 @@
+{
+  "publishers": [
+    {
+      "name": "Devir Brasil",
+      "url": "https://devir.com.br/jogos-de-tabuleiro/",
+      "feed_url": "https://devir.com.br/category/jogos-de-tabuleiro/feed/"
+    },
+    {
+      "name": "Galápagos Jogos",
+      "url": "https://blog.mundogalapagos.com.br/",
+      "feed_url": "https://blog.mundogalapagos.com.br/feed/"
+    },
+    {
+      "name": "Paper Games",
+      "url": "https://papergames.com.br/blog/",
+      "feed_url": "https://papergames.com.br/feed/"
+    },
+    {
+      "name": "Grok Games",
+      "url": "https://grok-games.lojaintegrada.com.br/blog",
+      "feed_url": ""
+    },
+    {
+      "name": "Meeple BR",
+      "url": "https://meeplebr.com/blog/",
+      "feed_url": "https://meeplebr.com/feed/"
+    }
+  ],
+  "email": {
+    "sender": "BoardNews BR <onboarding@resend.dev>",
+    "receiver": "seu-email@exemplo.com"
+  },
+  "settings": {
+    "dry_run": false,
+    "bgg_timeout_seconds": 10,
+    "request_timeout_seconds": 15,
+    "max_pre_sale_pages": 2,
+    "max_promo_pages": 3
+  }
+}
