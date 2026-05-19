@@ -43,29 +43,36 @@ jobs:
           
           # Verifica se o arquivo sqlite foi criado ou modificado
           if [ -f newsletter.db ]; then
-            echo "Banco de dados SQLite encontrado. Preparando para persistir com segurança..."
+            echo "Banco de dados SQLite encontrado. Iniciando processo de persistência robusta..."
             
-            # Faz backup do banco de dados gerado nesta execução
-            cp newsletter.db newsletter.db.tmp
-            
-            # Busca o estado mais recente do repositório remoto
-            git fetch origin ${{ github.ref_name }}
-            
-            # Garante que estamos na branch correta localmente (criando se não existir)
+            # 1. Garante que estamos na branch correta localmente e sincronizados
             git checkout ${{ github.ref_name }} || git checkout -b ${{ github.ref_name }} origin/${{ github.ref_name }}
             
-            # Reseta o branch local para bater 100% com o remoto, descartando qualquer divergência
-            git reset --hard origin/${{ github.ref_name }}
-            
-            # Restaura o banco de dados gerado nesta execução
-            mv newsletter.db.tmp newsletter.db
-            
-            # Adiciona e commita o banco de dados atualizado
+            # 2. Adiciona o banco e faz o commit local
             git add newsletter.db
             if ! git diff --cached --quiet; then
               git commit -m "chore: atualiza banco de dados da newsletter [skip ci]"
-              git push origin ${{ github.ref_name }}
-              echo "Banco de dados SQLite atualizado e persistido com sucesso na branch ${{ github.ref_name }}."
+              
+              # 3. Loop resiliente com Pull Rebase (-X ours) e Push
+              success=false
+              for i in {1..5}; do
+                echo "Tentativa $i de sincronização e push..."
+                git fetch origin ${{ github.ref_name }}
+                if git pull origin ${{ github.ref_name }} --rebase -X ours; then
+                  if git push origin ${{ github.ref_name }}; then
+                    echo "Banco de dados SQLite atualizado e persistido com sucesso na branch ${{ github.ref_name }}!"
+                    success=true
+                    break
+                  fi
+                fi
+                echo "Concorrência detectada ou falha na tentativa $i. Aguardando 5 segundos para tentar novamente..."
+                sleep 5
+              done
+              
+              if [ "$success" = false ]; then
+                echo "Erro: Não foi possível realizar o push após 5 tentativas devido a concorrência persistente."
+                exit 1
+              fi
             else
               echo "Nenhuma alteração real foi detectada no banco de dados SQLite."
             fi
