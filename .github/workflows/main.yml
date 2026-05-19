@@ -1,0 +1,75 @@
+name: Daily Board Game Newsletter
+
+on:
+  schedule:
+    # Roda todos os dias às 09:30 UTC (06:30 no Horário de Brasília UTC-3)
+    - cron: '30 9 * * *'
+  workflow_dispatch: # Permite disparar a execução manualmente pela interface do GitHub
+
+permissions:
+  contents: write # Necessário para fazer commit e push do banco SQLite atualizado
+
+jobs:
+  run-newsletter:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Newsletter Script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: python main.py
+
+      - name: Commit and Push SQLite Database Changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Verifica se o arquivo sqlite foi criado ou modificado
+          if [ -f newsletter.db ]; then
+            echo "Banco de dados SQLite encontrado. Preparando para persistir com segurança..."
+            
+            # Faz backup do banco de dados gerado nesta execução
+            cp newsletter.db newsletter.db.tmp
+            
+            # Busca o estado mais recente do repositório remoto
+            git fetch origin ${{ github.ref_name }}
+            
+            # Garante que estamos na branch correta localmente (criando se não existir)
+            git checkout ${{ github.ref_name }} || git checkout -b ${{ github.ref_name }} origin/${{ github.ref_name }}
+            
+            # Reseta o branch local para bater 100% com o remoto, descartando qualquer divergência
+            git reset --hard origin/${{ github.ref_name }}
+            
+            # Restaura o banco de dados gerado nesta execução
+            mv newsletter.db.tmp newsletter.db
+            
+            # Adiciona e commita o banco de dados atualizado
+            git add newsletter.db
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: atualiza banco de dados da newsletter [skip ci]"
+              git push origin ${{ github.ref_name }}
+              echo "Banco de dados SQLite atualizado e persistido com sucesso na branch ${{ github.ref_name }}."
+            else
+              echo "Nenhuma alteração real foi detectada no banco de dados SQLite."
+            fi
+          else
+            echo "Banco de dados SQLite não encontrado. Nada para persistir."
+          fi
+
