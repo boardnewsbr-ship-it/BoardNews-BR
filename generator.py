@@ -84,7 +84,10 @@ def filter_publisher_post(title: str, content: str) -> bool:
         except Exception as e:
             print(f"Erro ao parsear resposta de filtragem do Gemini: {e}. Texto original: {res_text}")
             
-    return False
+    # Se a chamada à API do Gemini falhar ou retornar erro de cota (429), aplica o fallback local baseado em palavras-chaves
+    keywords = ["lançamento", "anúncio", "chegou", "pré-venda", "novidade", "revelado", "vem aí", "unmatched", "puerto rico"]
+    title_lower = title.lower()
+    return any(k in title_lower for k in keywords)
 
 def generate_summary(game_name: str, contextual_info: str = "") -> str:
     """

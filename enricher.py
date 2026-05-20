@@ -7,6 +7,10 @@ import re
 BGG_SEARCH_URL = "https://boardgamegeek.com/xmlapi2/search"
 BGG_THING_URL = "https://boardgamegeek.com/xmlapi2/thing"
 
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
+
 def clean_game_name(name: str) -> str:
     """Limpa o nome do jogo para melhorar a busca na API do BGG."""
     # Remove textos entre parênteses, colchetes ou termos como "Jogo de Tabuleiro", "Expansão", "Pré-venda"
@@ -30,24 +34,28 @@ def search_bgg_game_id(game_name: str) -> str:
     }
     
     try:
-        response = requests.get(BGG_SEARCH_URL, params=params, timeout=10)
+        response = requests.get(BGG_SEARCH_URL, params=params, headers=HEADERS, timeout=10)
         if response.status_code == 200:
             root = ET.fromstring(response.content)
             items = root.findall('item')
             if items:
                 # Retorna o ID do primeiro resultado
                 return items[0].get('id')
+        else:
+            print(f"BGG Search retornou status {response.status_code} para '{cleaned_name}'")
                 
         # Se não achou com o nome limpo, tenta buscar apenas pela primeira palavra significativa (resiliência)
         words = cleaned_name.split()
         if len(words) > 1:
             params['query'] = words[0]
-            response = requests.get(BGG_SEARCH_URL, params=params, timeout=10)
+            response = requests.get(BGG_SEARCH_URL, params=params, headers=HEADERS, timeout=10)
             if response.status_code == 200:
                 root = ET.fromstring(response.content)
                 items = root.findall('item')
                 if items:
                     return items[0].get('id')
+            else:
+                print(f"BGG Search (fallback) retornou status {response.status_code} para '{words[0]}'")
                     
     except Exception as e:
         print(f"Erro ao buscar ID do jogo '{game_name}' no BGG: {e}")
@@ -64,7 +72,7 @@ def fetch_bgg_game_details(bgg_id: str) -> dict:
     }
     
     try:
-        response = requests.get(BGG_THING_URL, params=params, timeout=10)
+        response = requests.get(BGG_THING_URL, params=params, headers=HEADERS, timeout=10)
         if response.status_code == 200:
             root = ET.fromstring(response.content)
             item = root.find('item')
@@ -95,6 +103,8 @@ def fetch_bgg_game_details(bgg_id: str) -> dict:
                     'image': image_url or thumbnail_url,
                     'players': players_str
                 }
+        else:
+            print(f"BGG Thing retornou status {response.status_code} para ID {bgg_id}")
     except Exception as e:
         print(f"Erro ao obter detalhes do jogo ID {bgg_id} no BGG: {e}")
         

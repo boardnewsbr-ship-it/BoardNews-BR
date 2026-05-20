@@ -66,10 +66,8 @@ def run():
         bgg_data = enricher.enrich_game_data(post['title'])
         players = bgg_data.get('players')
         
-        # Regra de exclusão: se não encontrar dados de jogadores no BGG, desconsiderar
-        if not players:
-            print(f"-> Ignorado (Sem dados de jogadores no BGG): '{post['title']}'")
-            continue
+        # Enriquecimento de Dados (Opcional - Fallback elegante se falhar no BGG)
+        players = players or "Jogadores: Sob consulta"
             
         # Imagem (usa fallback do BGG se necessário)
         image = post.get('image') or bgg_data.get('image')
@@ -103,9 +101,8 @@ def run():
         bgg_data = enricher.enrich_game_data(game['name'])
         players = bgg_data.get('players')
         
-        if not players:
-            print(f"-> Ignorado (Sem dados de jogadores no BGG): '{game['name']}'")
-            continue
+        # Enriquecimento de Dados (Opcional - Fallback elegante se falhar no BGG)
+        players = players or "Jogadores: Sob consulta"
             
         image = game.get('image') or bgg_data.get('image')
         
@@ -136,9 +133,8 @@ def run():
         bgg_data = enricher.enrich_game_data(game['name'])
         players = bgg_data.get('players')
         
-        if not players:
-            print(f"-> Ignorado (Sem dados de jogadores no BGG): '{game['name']}'")
-            continue
+        # Enriquecimento de Dados (Opcional - Fallback elegante se falhar no BGG)
+        players = players or "Jogadores: Sob consulta"
             
         image = game.get('image') or bgg_data.get('image')
         summary = generator.generate_summary(game['name'])
