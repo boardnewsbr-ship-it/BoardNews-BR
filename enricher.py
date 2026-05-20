@@ -34,17 +34,35 @@ def search_bgg_game_id(game_name: str) -> str:
     }
     
     try:
+        # 1. Tenta a busca direta com o nome em português limpo
         response = requests.get(BGG_SEARCH_URL, params=params, headers=HEADERS, timeout=10)
         if response.status_code == 200:
             root = ET.fromstring(response.content)
             items = root.findall('item')
             if items:
-                # Retorna o ID do primeiro resultado
                 return items[0].get('id')
         else:
             print(f"BGG Search retornou status {response.status_code} para '{cleaned_name}'")
-                
-        # Se não achou com o nome limpo, tenta buscar apenas pela primeira palavra significativa (resiliência)
+            
+        # 2. Se falhar, tenta usar o Gemini para traduzir o nome do jogo para o nome original em inglês / BGG
+        try:
+            from generator import translate_game_name
+            english_name = translate_game_name(game_name)
+            cleaned_english = clean_game_name(english_name)
+            
+            if cleaned_english and cleaned_english.lower() != cleaned_name.lower():
+                print(f"-> Nome traduzido via Gemini para busca BGG: '{cleaned_english}' (Nome original: '{game_name}')")
+                params['query'] = cleaned_english
+                response = requests.get(BGG_SEARCH_URL, params=params, headers=HEADERS, timeout=10)
+                if response.status_code == 200:
+                    root = ET.fromstring(response.content)
+                    items = root.findall('item')
+                    if items:
+                        return items[0].get('id')
+        except Exception as gem_err:
+            print(f"Falha na tentativa de tradução via Gemini para BGG: {gem_err}")
+                 
+        # 3. Se ainda não achou, tenta buscar apenas pela primeira palavra significativa (resiliência final)
         words = cleaned_name.split()
         if len(words) > 1:
             params['query'] = words[0]
@@ -56,11 +74,12 @@ def search_bgg_game_id(game_name: str) -> str:
                     return items[0].get('id')
             else:
                 print(f"BGG Search (fallback) retornou status {response.status_code} para '{words[0]}'")
-                    
+                     
     except Exception as e:
         print(f"Erro ao buscar ID do jogo '{game_name}' no BGG: {e}")
         
     return None
+
 
 def fetch_bgg_game_details(bgg_id: str) -> dict:
     """Busca detalhes de um jogo por ID no BGG (imagem e quantidade de jogadores)."""

@@ -166,9 +166,90 @@ def scrape_playeasy_promotions(max_pages=3) -> list:
             
     return results
 
+def scrape_instagram_posts(handle: str, publisher_name: str) -> list:
+    """
+    Raspa posts recentes e stories do Picuki para o handle de Instagram da editora.
+    Retorna uma lista de candidatos de notícias.
+    """
+    if not handle:
+        return []
+        
+    url = f"https://www.picuki.com/profile/{handle}"
+    print(f"Coletando notícias do Instagram de {publisher_name} (@{handle}): {url}")
+    
+    instagram_news = []
+    
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        if response.status_code != 200:
+            print(f"Não foi possível acessar o Picuki para {publisher_name} (@{handle}). Status: {response.status_code}")
+            return []
+            
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # 1. Verifica Stories
+        # No Picuki, se houver stories ativos, existem elementos de stories como .stories-container, .story-item, .stories-icon, etc.
+        has_active_stories = False
+        stories_elements = soup.select('.stories-container, .story-item, .story-image, .stories-icon, .profile-stories-container, .stories_icon')
+        if stories_elements:
+            has_active_stories = True
+            print(f"-> Stories ativos detectados para {publisher_name} (@{handle})!")
+            
+        # 2. Raspa Posts
+        posts = soup.select('.box-photo')
+        print(f"Encontrados {len(posts)} posts no Picuki para @{handle}")
+        
+        for post in posts[:6]:  # Pega os 6 posts mais recentes
+            # Imagem do post
+            img_tag = post.select_one('.photo img')
+            img_url = img_tag.get('src') if img_tag else None
+            
+            # Link do post
+            link_tag = post.select_one('.photo a')
+            link_url = link_tag.get('href') if link_tag else None
+            if link_url and not link_url.startswith('http'):
+                link_url = urllib.parse.urljoin("https://www.picuki.com", link_url)
+                
+            # Tempo do post
+            time_tag = post.select_one('.time, .time-box')
+            time_text = time_tag.text.strip() if time_tag else ""
+            
+            # Legenda/Descrição
+            desc_tag = post.select_one('.photo-info p, .photo-description')
+            desc_text = desc_tag.text.strip() if desc_tag else ""
+            
+            # Filtro de data: se o post foi ontem ou muito recente (1 day ago, yesterday, hours ago)
+            time_lower = time_text.lower()
+            is_recent = False
+            if any(term in time_lower for term in ['hour', 'minute', 'day ago', 'yesterday', 'ontem', 'dia', 'hora', 'minuto']):
+                is_recent = True
+            
+            if is_recent and desc_text:
+                # Criamos um título resumido a partir da legenda
+                title_text = desc_text[:70].strip() + ("..." if len(desc_text) > 70 else "")
+                
+                content_text = desc_text
+                if has_active_stories:
+                    content_text += " [Nota: Esta editora possui Stories ativos hoje no Instagram]"
+                    
+                instagram_news.append({
+                    'publisher': publisher_name,
+                    'title': f"Instagram: {title_text}",
+                    'link': link_url or f"https://www.instagram.com/{handle}/",
+                    'content': content_text,
+                    'image': img_url,
+                    'source_type': 'instagram'
+                })
+                
+    except Exception as e:
+        print(f"Erro ao raspar Instagram de {publisher_name} (@{handle}): {e}")
+        
+    return instagram_news
+
+
 def scrape_publishers_news(publishers: list) -> list:
     """
-    Coleta notícias dos blogs/sites ou feeds das editoras configuradas.
+    Coleta notícias dos blogs/sites, feeds ou redes sociais das editoras configuradas.
     Retorna uma lista de candidatos de notícias para filtragem por IA.
     """
     news_items = []
@@ -177,99 +258,114 @@ def scrape_publishers_news(publishers: list) -> list:
         name = pub.get('name')
         feed_url = pub.get('feed_url')
         url = pub.get('url')
+        instagram_handle = pub.get('instagram_handle')
         
-        print(f"Coletando notícias de: {name}")
+        has_blog_success = False
         
         # 1. Tenta RSS Feed se disponível (Altamente estável)
         if feed_url:
             try:
                 response = requests.get(feed_url, headers=HEADERS, timeout=15)
                 if response.status_code == 200:
-                    soup = BeautifulSoup(response.content, 'html.parser')
-                    items = soup.find_all('item')
+                    # Extrai os blocos <item> usando regex do texto bruto para evitar que o html.parser descarte o link
+                    feed_text = response.text
+                    items_raw = re.findall(r'<item>.*?</item>', feed_text, re.DOTALL)
                     
-                    for item in items[:5]:  # Pega os 5 posts mais recentes
-                        title = item.find('title')
-                        link = item.find('link')
-                        desc = item.find('description') or item.find('content:encoded')
-                        
-                        title_text = title.text.strip() if title else ""
-                        link_text = link.text.strip() if link else ""
-                        desc_text = desc.text.strip() if desc else ""
-                        
-                        # Limpa HTML da descrição
-                        desc_clean = BeautifulSoup(desc_text, 'html.parser').get_text()
-                        desc_clean = re.sub(r'\s+', ' ', desc_clean).strip()[:1000]
-                        
-                        news_items.append({
-                            'publisher': name,
-                            'title': title_text,
-                            'link': link_text,
-                            'content': desc_clean,
-                            'source_type': 'rss'
-                        })
-                    continue  # Sucesso no RSS, pula para a próxima editora
+                    if items_raw:
+                        print(f"Coletando notícias RSS de: {name} (Encontrados {len(items_raw)} posts)")
+                        for item_raw in items_raw[:5]:  # Pega os 5 posts mais recentes
+                            # Extrai o link via regex do XML bruto do item
+                            link_match = re.search(r'<link[^>]*>(.*?)</link>', item_raw, re.DOTALL)
+                            link_text = ""
+                            if link_match:
+                                link_text = link_match.group(1).strip()
+                                # Remove CDATA se houver
+                                link_text = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', link_text).strip()
+                                
+                            # Usa BeautifulSoup para o resto de forma tolerante
+                            item_soup = BeautifulSoup(item_raw, 'html.parser')
+                            title = item_soup.find('title')
+                            desc = item_soup.find('description') or item_soup.find('content:encoded')
+                            
+                            title_text = title.text.strip() if title else ""
+                            desc_text = desc.text.strip() if desc else ""
+                            
+                            # Se por acaso o link_text via regex falhar, tenta o guid
+                            if not link_text:
+                                guid_tag = item_soup.find('guid')
+                                link_text = guid_tag.text.strip() if guid_tag else ""
+                                
+                            # Limpa HTML da descrição
+                            desc_clean = BeautifulSoup(desc_text, 'html.parser').get_text()
+                            desc_clean = re.sub(r'\s+', ' ', desc_clean).strip()[:1000]
+                            
+                            news_items.append({
+                                'publisher': name,
+                                'title': title_text,
+                                'link': link_text,
+                                'content': desc_clean,
+                                'source_type': 'rss'
+                            })
+                        has_blog_success = True
             except Exception as e:
                 print(f"Erro ao ler feed RSS para {name}: {e}. Tentando raspagem direta da página...")
         
         # 2. Fallback: Raspagem HTML direta da página de notícias
-        if url:
+        if not has_blog_success and url:
             try:
                 response = requests.get(url, headers=HEADERS, timeout=15)
-                if response.status_code != 200:
-                    print(f"Erro ao acessar blog de {name}: Status {response.status_code}")
-                    continue
+                if response.status_code == 200:
+                    print(f"Coletando notícias HTML de: {name}")
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    articles = []
                     
-                soup = BeautifulSoup(response.content, 'html.parser')
-                
-                # Seletor genérico para links e blocos de artigos comuns
-                articles = []
-                
-                # Tenta seletores comuns de blogs (WordPress, etc.)
-                for article in soup.select('article, .post, .item-post, .news-item')[:5]:
-                    title_tag = article.select_one('h1 a, h2 a, h3 a, .entry-title a, .post-title a')
-                    if title_tag:
-                        title_text = title_tag.text.strip()
-                        link_text = title_tag.get('href', '')
-                        
-                        # Garante link absoluto
-                        if link_text and not link_text.startswith('http'):
-                            link_text = urllib.parse.urljoin(url, link_text)
+                    for article in soup.select('article, .post, .item-post, .news-item')[:5]:
+                        title_tag = article.select_one('h1 a, h2 a, h3 a, .entry-title a, .post-title a')
+                        if title_tag:
+                            title_text = title_tag.text.strip()
+                            link_text = title_tag.get('href', '')
                             
-                        desc_tag = article.select_one('.entry-content, .entry-summary, .post-content, p')
-                        desc_clean = desc_tag.text.strip() if desc_tag else ""
-                        desc_clean = re.sub(r'\s+', ' ', desc_clean).strip()[:1000]
-                        
-                        articles.append({
-                            'publisher': name,
-                            'title': title_text,
-                            'link': link_text,
-                            'content': desc_clean,
-                            'source_type': 'html'
-                        })
-                
-                # Se não encontrou artigos estruturados, tenta pegar links que se parecem com posts
-                if not articles:
-                    for a_tag in soup.select('a')[:100]:
-                        href = a_tag.get('href', '')
-                        text = a_tag.text.strip()
-                        if len(text) > 20 and href and ('blog' in href or 'noticias' in href or 'artigo' in href or 'posts' in href or re.search(r'/\d{4}/\d{2}/', href)):
-                            if not any(item['link'] == href for item in articles):
-                                if not href.startswith('http'):
-                                    href = urllib.parse.urljoin(url, href)
-                                articles.append({
-                                    'publisher': name,
-                                    'title': text,
-                                    'link': href,
-                                    'content': "",
-                                    'source_type': 'html-links'
-                                })
-                
-                news_items.extend(articles[:5])
-                
+                            if link_text and not link_text.startswith('http'):
+                                link_text = urllib.parse.urljoin(url, link_text)
+                                
+                            desc_tag = article.select_one('.entry-content, .entry-summary, .post-content, p')
+                            desc_clean = desc_tag.text.strip() if desc_tag else ""
+                            desc_clean = re.sub(r'\s+', ' ', desc_clean).strip()[:1000]
+                            
+                            articles.append({
+                                'publisher': name,
+                                'title': title_text,
+                                'link': link_text,
+                                'content': desc_clean,
+                                'source_type': 'html'
+                            })
+                            
+                    if not articles:
+                        for a_tag in soup.select('a')[:100]:
+                            href = a_tag.get('href', '')
+                            text = a_tag.text.strip()
+                            if len(text) > 20 and href and ('blog' in href or 'noticias' in href or 'artigo' in href or 'posts' in href or re.search(r'/\d{4}/\d{2}/', href)):
+                                if not any(item['link'] == href for item in articles):
+                                    if not href.startswith('http'):
+                                        href = urllib.parse.urljoin(url, href)
+                                    articles.append({
+                                        'publisher': name,
+                                        'title': text,
+                                        'link': href,
+                                        'content': "",
+                                        'source_type': 'html-links'
+                                    })
+                                    
+                    news_items.extend(articles[:5])
             except Exception as e:
                 print(f"Erro ao raspar blog HTML de {name}: {e}")
                 
+        # 3. Sempre coleta o Instagram se o handle estiver disponível (mesmo que o blog ou RSS funcione!)
+        if instagram_handle:
+            ig_posts = scrape_instagram_posts(instagram_handle, name)
+            news_items.extend(ig_posts)
+            
         time.sleep(1)
         
     return news_items
+

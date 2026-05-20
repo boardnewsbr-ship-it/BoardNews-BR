@@ -51,15 +51,15 @@ def run():
     # ----------------- PROCESSAMENTO: NOVIDADES DAS EDITORAS -----------------
     print("\nProcessando novidades das editoras...")
     for post in raw_news:
-        # Filtragem Inteligente via IA
+        # Controle de Duplicidade (Filtro prioritário local sem consumo de API)
+        if database.is_duplicate_news(post['link'], post['title']):
+            print(f"-> Duplicado (Já enviado antes): '{post['title']}'")
+            continue
+            
+        # Filtragem Inteligente via IA (Executado apenas para itens 100% novos!)
         is_valuable = generator.filter_publisher_post(post['title'], post['content'])
         if not is_valuable:
             print(f"-> Ignorado (Não é anúncio/lançamento): '{post['title']}'")
-            continue
-            
-        # Controle de Duplicidade
-        if database.is_duplicate_news(post['link'], post['title']):
-            print(f"-> Duplicado (Já enviado antes): '{post['title']}'")
             continue
             
         # Enriquecimento de Dados

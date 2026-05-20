@@ -3,27 +3,32 @@
     {
       "name": "Devir Brasil",
       "url": "https://devir.com.br/jogos-de-tabuleiro/",
-      "feed_url": "https://devir.com.br/category/jogos-de-tabuleiro/feed/"
+      "feed_url": "https://devir.com.br/category/jogos-de-tabuleiro/feed/",
+      "instagram_handle": "devirbrasil"
     },
     {
       "name": "Galápagos Jogos",
       "url": "https://blog.mundogalapagos.com.br/",
-      "feed_url": "https://blog.mundogalapagos.com.br/feed/"
+      "feed_url": "https://blog.mundogalapagos.com.br/feed/",
+      "instagram_handle": "asmodee_br"
     },
     {
       "name": "Paper Games",
       "url": "https://papergames.com.br/blog/",
-      "feed_url": "https://papergames.com.br/feed/"
+      "feed_url": "https://papergames.com.br/feed/",
+      "instagram_handle": "papergamesbr"
     },
     {
       "name": "Grok Games",
       "url": "https://grok-games.lojaintegrada.com.br/blog",
-      "feed_url": ""
+      "feed_url": "",
+      "instagram_handle": "grok.games"
     },
     {
       "name": "Meeple BR",
       "url": "https://meeplebr.com/blog/",
-      "feed_url": "https://meeplebr.com/feed/"
+      "feed_url": "https://meeplebr.com/feed/",
+      "instagram_handle": "meeplebr"
     }
   ],
   "email": {
