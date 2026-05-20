@@ -3,54 +3,54 @@ import requests
 import json
 import time
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Controle preventivo de cota (15 RPM do Gemini Free Tier)
-# Garante que as requisições tenham um intervalo seguro de pelo menos 4.5 segundos entre si.
+# Controle preventivo de cota (Limites generosos do Groq, mas mantendo intervalo seguro de 1.5s)
 _LAST_CALL_TIME = 0.0
 
 def get_api_key() -> str:
-    """Obtém a API Key do Gemini a partir das variáveis de ambiente."""
-    return os.environ.get("GEMINI_API_KEY", "")
+    """Obtém a API Key da Groq a partir das variáveis de ambiente."""
+    return os.environ.get("GROQ_API_KEY", "")
 
-def call_gemini(prompt: str, response_json: bool = False) -> str:
+def call_groq(prompt: str, response_json: bool = False) -> str:
     """
-    Realiza uma chamada direta via HTTP para a API do Gemini (2.5-flash)
+    Realiza uma chamada direta via HTTP para a API do Groq (Llama 3.3 70B)
     com rate limiting preventivo e tratamento de erros 429 (excesso de cota) com retentativas e backoff.
     """
     global _LAST_CALL_TIME
     
     api_key = get_api_key()
     if not api_key:
-        print("AVISO: GEMINI_API_KEY não configurada. Usando fallback básico.")
+        print("AVISO: GROQ_API_KEY não configurada. Usando fallback básico.")
         return None
         
-    # Rate limit preventivo: garante que decorreu pelo menos 4.5 segundos da última chamada
+    # Rate limit preventivo sutil: garante pelo menos 1.5 segundos da última chamada
     current_time = time.time()
     elapsed = current_time - _LAST_CALL_TIME
-    if elapsed < 4.5:
-        sleep_time = 4.5 - elapsed
+    if elapsed < 1.5:
+        sleep_time = 1.5 - elapsed
         time.sleep(sleep_time)
         
-    url = f"{GEMINI_API_URL}?key={api_key}"
+    url = GROQ_API_URL
     headers = {
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
     payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }],
-        "generationConfig": {
-            "temperature": 0.2
-        }
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.2
     }
     
     if response_json:
-        payload["generationConfig"]["responseMimeType"] = "application/json"
+        payload["response_format"] = {"type": "json_object"}
         
     max_retries = 3
-    retry_delay = 20.0  # Aguarda 20 segundos iniciais em caso de 429
+    retry_delay = 5.0  # Aguarda 5 segundos iniciais em caso de 429 na Groq
     
     for attempt in range(1, max_retries + 1):
         _LAST_CALL_TIME = time.time()
@@ -59,29 +59,29 @@ def call_gemini(prompt: str, response_json: bool = False) -> str:
             
             if response.status_code == 200:
                 res_data = response.json()
-                text = res_data['candidates'][0]['content']['parts'][0]['text']
+                text = res_data['choices'][0]['message']['content']
                 return text.strip()
                 
             elif response.status_code == 429:
-                print(f"⚠️ [Tentativa {attempt}/{max_retries}] Cota do Gemini excedida (Erro 429). Aguardando {retry_delay}s antes de tentar novamente...")
+                print(f"⚠️ [Tentativa {attempt}/{max_retries}] Cota do Groq excedida (Erro 429). Aguardando {retry_delay}s antes de tentar novamente...")
                 time.sleep(retry_delay)
-                retry_delay *= 1.5  # Aumenta o tempo de espera de forma progressiva
+                retry_delay *= 2.0  # Aumenta o tempo de espera de forma progressiva
                 continue
                 
             else:
-                print(f"Erro na API do Gemini: {response.status_code} - {response.text}")
+                print(f"Erro na API do Groq: {response.status_code} - {response.text}")
                 break
                 
         except Exception as e:
-            print(f"Erro ao chamar o Gemini (Tentativa {attempt}/{max_retries}): {e}")
+            print(f"Erro ao chamar o Groq (Tentativa {attempt}/{max_retries}): {e}")
             if attempt < max_retries:
-                time.sleep(5)
+                time.sleep(2)
                 
     return None
 
 def filter_publisher_post(title: str, content: str) -> bool:
     """
-    Usa o Gemini para filtrar posts das editoras (blogs ou Instagram).
+    Usa o Llama 3 via Groq para filtrar posts das editoras (blogs ou Instagram).
     Retorna True se for um anúncio/novidade de lançamento de jogo, expansão, pré-venda ou evento oficial de jogos.
     Retorna False para posts sociais genéricos, institucionais vazios, memes, etc.
     """
@@ -117,15 +117,15 @@ def filter_publisher_post(title: str, content: str) -> bool:
     Conteúdo do Post: "{content}"
     """
     
-    res_text = call_gemini(prompt, response_json=True)
+    res_text = call_groq(prompt, response_json=True)
     if res_text:
         try:
             data = json.loads(res_text)
             return bool(data.get("is_announcement", False))
         except Exception as e:
-            print(f"Erro ao parsear resposta de filtragem do Gemini: {e}. Texto original: {res_text}")
+            print(f"Erro ao parsear resposta de filtragem do Groq: {e}. Texto original: {res_text}")
             
-    # Se a chamada à API do Gemini falhar ou retornar erro de cota (429), aplica o fallback local baseado em palavras-chaves
+    # Se a chamada à API do Groq falhar ou retornar erro de cota (429), aplica o fallback local baseado em palavras-chaves
     keywords = ["lançamento", "anúncio", "chegou", "pré-venda", "novidade", "revelado", "vem aí", "unmatched", "puerto rico", "evento", "torneio", "campeonato", "encontro"]
     title_lower = title.lower()
     return any(k in title_lower for k in keywords)
@@ -133,7 +133,7 @@ def filter_publisher_post(title: str, content: str) -> bool:
 
 def translate_game_name(game_name: str) -> str:
     """
-    Usa o Gemini para traduzir ou encontrar o nome original em inglês de um jogo de tabuleiro brasileiro
+    Usa o Llama 3 via Groq para traduzir ou encontrar o nome original em inglês de um jogo de tabuleiro brasileiro
     a fim de facilitar a busca na API do BoardGameGeek (BGG).
     """
     if not get_api_key():
@@ -158,21 +158,21 @@ def translate_game_name(game_name: str) -> str:
     """
     
     try:
-        res_text = call_gemini(prompt, response_json=True)
+        res_text = call_groq(prompt, response_json=True)
         if res_text:
             data = json.loads(res_text)
             english_name = data.get("english_name", game_name)
             if english_name:
                 return english_name.strip()
     except Exception as e:
-        print(f"Erro ao traduzir nome do jogo '{game_name}' via Gemini: {e}")
+        print(f"Erro ao traduzir nome do jogo '{game_name}' via Groq: {e}")
         
     return game_name
 
 
 def generate_summary(game_name: str, contextual_info: str = "") -> str:
     """
-    Gera um resumo atraente de gameplay de no máximo 2 parágrafos.
+    Gera um resumo atraente de gameplay de no máximo 2 parágrafos usando o Groq.
     """
     if not get_api_key():
         # Fallback se não houver API key
@@ -191,7 +191,7 @@ def generate_summary(game_name: str, contextual_info: str = "") -> str:
     Informações de contexto adicionais coletadas: "{contextual_info}"
     """
     
-    summary = call_gemini(prompt, response_json=False)
+    summary = call_groq(prompt, response_json=False)
     if summary:
         return summary
         
