@@ -3,6 +3,12 @@ from bs4 import BeautifulSoup
 import urllib.parse
 import time
 import re
+import warnings
+from bs4 import XMLParsedAsHTMLWarning
+
+# Ignora o aviso do BeautifulSoup ao fazer parse de feeds RSS (XML) usando html.parser
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
