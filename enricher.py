@@ -90,43 +90,56 @@ def fetch_bgg_game_details(bgg_id: str) -> dict:
         'id': bgg_id
     }
     
-    try:
-        response = requests.get(BGG_THING_URL, params=params, headers=HEADERS, timeout=10)
-        if response.status_code == 200:
-            root = ET.fromstring(response.content)
-            item = root.find('item')
-            if item is not None:
-                # Imagem
-                image_tag = item.find('image')
-                image_url = image_tag.text if image_tag is not None else None
-                
-                # Thumbnail
-                thumb_tag = item.find('thumbnail')
-                thumbnail_url = thumb_tag.text if thumb_tag is not None else None
-                
-                # Número de jogadores
-                min_players_tag = item.find('minplayers')
-                max_players_tag = item.find('maxplayers')
-                
-                min_players = min_players_tag.get('value') if min_players_tag is not None else None
-                max_players = max_players_tag.get('value') if max_players_tag is not None else None
-                
-                players_str = None
-                if min_players and max_players:
-                    if min_players == max_players:
-                        players_str = f"{min_players} jogador" if min_players == "1" else f"{min_players} jogadores"
-                    else:
-                        players_str = f"{min_players}-{max_players} jogadores"
-                        
-                return {
-                    'image': image_url or thumbnail_url,
-                    'players': players_str
-                }
-        else:
-            print(f"BGG Thing retornou status {response.status_code} para ID {bgg_id}")
-    except Exception as e:
-        print(f"Erro ao obter detalhes do jogo ID {bgg_id} no BGG: {e}")
-        
+    # Attempt to fetch game details, handling possible 202 (Accepted) responses by polling
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(BGG_THING_URL, params=params, headers=HEADERS, timeout=10)
+            if response.status_code == 200:
+                root = ET.fromstring(response.content)
+                item = root.find('item')
+                if item is not None:
+                    # Imagem
+                    image_tag = item.find('image')
+                    image_url = image_tag.text if image_tag is not None else None
+
+                    # Thumbnail
+                    thumb_tag = item.find('thumbnail')
+                    thumbnail_url = thumb_tag.text if thumb_tag is not None else None
+
+                    # Número de jogadores
+                    min_players_tag = item.find('minplayers')
+                    max_players_tag = item.find('maxplayers')
+
+                    min_players = min_players_tag.get('value') if min_players_tag is not None else None
+                    max_players = max_players_tag.get('value') if max_players_tag is not None else None
+
+                    players_str = None
+                    if min_players and max_players:
+                        if min_players == max_players:
+                            players_str = f"{min_players} jogador" if min_players == "1" else f"{min_players} jogadores"
+                        else:
+                            players_str = f"{min_players}-{max_players} jogadores"
+
+                    return {
+                        'image': image_url or thumbnail_url,
+                        'players': players_str
+                    }
+                # If item is None, treat as no data
+                break
+            elif response.status_code == 202:
+                # Still processing, wait before retrying
+                wait_seconds = 2 ** attempt  # exponential backoff
+                print(f"BGG retornou 202 (Accepted) para ID {bgg_id}, tentando novamente em {wait_seconds}s (tentativa {attempt + 1}/{max_retries})")
+                time.sleep(wait_seconds)
+                continue
+            else:
+                print(f"BGG Thing retornou status {response.status_code} para ID {bgg_id}")
+                break
+        except Exception as e:
+            print(f"Erro ao obter detalhes do jogo ID {bgg_id} no BGG: {e}")
+            break
+    # Se não conseguiu obter detalhes, retorna None
     return None
 
 def enrich_game_data(game_name: str) -> dict:

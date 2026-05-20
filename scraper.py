@@ -167,71 +167,49 @@ def scrape_playeasy_promotions(max_pages=3) -> list:
     return results
 
 def scrape_instagram_posts(handle: str, publisher_name: str) -> list:
-    """
-    Raspa posts recentes e stories do Picuki para o handle de Instagram da editora.
-    Retorna uma lista de candidatos de notícias.
+    """Scrapes recent Instagram posts using Pixwox (primary) and Imginn (fallback).
+    Returns a list of candidate news items.
     """
     if not handle:
         return []
-        
-    url = f"https://www.picuki.com/profile/{handle}"
-    print(f"Coletando notícias do Instagram de {publisher_name} (@{handle}): {url}")
-    
+    source_urls = [
+        ("pixwox", f"https://www.pixwox.com/profile/{handle}/"),
+        ("imginn", f"https://imginn.com/{handle}/")
+    ]
     instagram_news = []
-    
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
-        if response.status_code != 200:
-            print(f"Não foi possível acessar o Picuki para {publisher_name} (@{handle}). Status: {response.status_code}")
-            return []
-            
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # 1. Verifica Stories
-        # No Picuki, se houver stories ativos, existem elementos de stories como .stories-container, .story-item, .stories-icon, etc.
-        has_active_stories = False
-        stories_elements = soup.select('.stories-container, .story-item, .story-image, .stories-icon, .profile-stories-container, .stories_icon')
-        if stories_elements:
-            has_active_stories = True
-            print(f"-> Stories ativos detectados para {publisher_name} (@{handle})!")
-            
-        # 2. Raspa Posts
-        posts = soup.select('.box-photo')
-        print(f"Encontrados {len(posts)} posts no Picuki para @{handle}")
-        
-        for post in posts[:6]:  # Pega os 6 posts mais recentes
-            # Imagem do post
-            img_tag = post.select_one('.photo img')
-            img_url = img_tag.get('src') if img_tag else None
-            
-            # Link do post
-            link_tag = post.select_one('.photo a')
-            link_url = link_tag.get('href') if link_tag else None
-            if link_url and not link_url.startswith('http'):
-                link_url = urllib.parse.urljoin("https://www.picuki.com", link_url)
-                
-            # Tempo do post
-            time_tag = post.select_one('.time, .time-box')
-            time_text = time_tag.text.strip() if time_tag else ""
-            
-            # Legenda/Descrição
-            desc_tag = post.select_one('.photo-info p, .photo-description')
-            desc_text = desc_tag.text.strip() if desc_tag else ""
-            
-            # Filtro de data: se o post foi ontem ou muito recente (1 day ago, yesterday, hours ago)
-            time_lower = time_text.lower()
-            is_recent = False
-            if any(term in time_lower for term in ['hour', 'minute', 'day ago', 'yesterday', 'ontem', 'dia', 'hora', 'minuto']):
-                is_recent = True
-            
-            if is_recent and desc_text:
-                # Criamos um título resumido a partir da legenda
-                title_text = desc_text[:70].strip() + ("..." if len(desc_text) > 70 else "")
-                
-                content_text = desc_text
+    for source_name, url in source_urls:
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=15)
+            if response.status_code != 200:
+                print(f"Cannot access {source_name} for {publisher_name} (@{handle}). Status: {response.status_code}")
+                continue
+            soup = BeautifulSoup(response.content, 'html.parser')
+            # Detect active stories if possible (heuristic: presence of story indicator)
+            has_active_stories = bool(soup.select('.stories, .story, .story-thumbnail'))
+            # Find recent posts: look for image tags within anchor links
+            posts = []
+            for a in soup.select('a'):
+                img = a.find('img')
+                if img and img.get('src'):
+                    posts.append((a, img))
+                if len(posts) >= 6:
+                    break
+            print(f"Found {len(posts)} posts on {source_name} for @{handle}")
+            for a, img in posts:
+                img_url = img.get('src')
+                link_url = a.get('href')
+                if link_url and not link_url.startswith('http'):
+                    link_url = urllib.parse.urljoin(url, link_url)
+                # Caption: try alt attribute then surrounding text
+                caption = img.get('alt', '').strip()
+                if not caption:
+                    # fallback: next sibling text
+                    caption = a.text.strip()
+                # Simple recent filter: assume posts are recent as they appear first
+                title_text = caption[:70].strip() + ("..." if len(caption) > 70 else "")
+                content_text = caption
                 if has_active_stories:
                     content_text += " [Nota: Esta editora possui Stories ativos hoje no Instagram]"
-                    
                 instagram_news.append({
                     'publisher': publisher_name,
                     'title': f"Instagram: {title_text}",
@@ -240,10 +218,11 @@ def scrape_instagram_posts(handle: str, publisher_name: str) -> list:
                     'image': img_url,
                     'source_type': 'instagram'
                 })
-                
-    except Exception as e:
-        print(f"Erro ao raspar Instagram de {publisher_name} (@{handle}): {e}")
-        
+            # If we got posts from primary source, break
+            if instagram_news:
+                break
+        except Exception as e:
+            print(f"Erro ao raspar {source_name} para {publisher_name} (@{handle}): {e}")
     return instagram_news
 
 
