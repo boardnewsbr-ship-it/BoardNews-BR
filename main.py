@@ -93,9 +93,10 @@ def run():
     # ----------------- PROCESSAMENTO: LANÇAMENTOS PLAYEASY -----------------
     print("\nProcessando lançamentos PlayEasy...")
     for game in raw_pre_sales:
-        if database.is_duplicate_news(game['link'], game['name']):
-            print(f"-> Duplicado (Já enviado antes): '{game['name']}'")
-            continue
+        # Duplicata removida para pré-vendas: permite recoleção de novos lançamentos
+        # if database.is_duplicate_news(game['link'], game['name']):
+        #     print(f"-> Duplicado (Já enviado antes): '{game['name']}'")
+        #     continue
             
         # Enriquecimento
         bgg_data = enricher.enrich_game_data(game['name'])

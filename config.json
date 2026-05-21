@@ -38,7 +38,7 @@
   "settings": {
     "dry_run": false,
     "bgg_timeout_seconds": 10,
-    "request_timeout_seconds": 15,
+    "request_timeout_seconds": 30,
     "max_pre_sale_pages": 2,
     "max_promo_pages": 3
   }

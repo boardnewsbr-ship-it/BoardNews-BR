@@ -80,26 +80,17 @@ def call_groq(prompt: str, response_json: bool = False) -> str:
     return None
 
 def filter_publisher_post(title: str, content: str) -> bool:
-    """
-    Usa o Llama 3 via Groq para filtrar posts das editoras (blogs ou Instagram).
-    Retorna True se for um anúncio/novidade de lançamento de jogo, expansão, pré-venda ou evento oficial de jogos.
-    Retorna False para posts sociais genéricos, institucionais vazios, memes, etc.
+    """Filtro menos restritivo: aceita todos os posts.
+    Mantém a verificação de API key apenas para compatibilidade; se houver chave,
+    ainda tenta a chamada Groq, mas caso falhe ou não exista, aceita o post.
     """
     if not get_api_key():
-        # Fallback se não houver API key: busca termos chaves no título
-        keywords = ["lançamento", "anúncio", "chegou", "pré-venda", "novidade", "revelado", "vem aí", "evento", "torneio", "campeonato", "encontro"]
-        title_lower = title.lower()
-        return any(k in title_lower for k in keywords)
-
+        # Sem API key: aceita tudo
+        return True
+    # Tenta usar a API do Groq, mas se falhar aceita o post
     prompt = f"""
     Você é um assistente especialista em jogos de tabuleiro (board games) e atua na curadoria do canal "BoardNews BR".
     Analise o título e o conteúdo do post de uma editora (que pode ser do blog oficial ou da rede social Instagram) e classifique se ele é de valor:
-    
-    1. APROVE APENAS se o post for sobre:
-       - Um anúncio de lançamento futuro de jogo ou expansão.
-       - Abertura de pré-vendas ou a chegada física de um jogo/expansão às lojas brasileiras.
-       - Novidades/teasers de novos títulos que estão sendo localizados.
-       - Eventos oficiais de jogos de tabuleiro organizados pela editora (ex: torneios de jogos específicos, campeonatos nacionais/locais, encontros públicos de jogatina com demonstrações, palestras e feiras presenciais).
        
     2. REJEITE imediatamente se for sobre:
        - Posts sociais genéricos, mensagens de "bom dia", datas comemorativas sem relação com jogos.
