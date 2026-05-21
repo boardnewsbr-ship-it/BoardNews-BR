@@ -1,9 +1,9 @@
 name: Daily Board Game Newsletter
 
 on:
-  schedule:
+  #schedule:
     # Roda todos os dias às 09:30 UTC (06:30 no Horário de Brasília UTC-3)
-    - cron: '30 9 * * *'
+   # - cron: '30 9 * * *'
   workflow_dispatch: # Permite disparar a execução manualmente pela interface do GitHub
 
 permissions:
