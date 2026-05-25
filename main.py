@@ -62,8 +62,12 @@ def run():
             print(f"-> Ignorado (Não é anúncio/lançamento): '{post['title']}'")
             continue
             
-        # Enriquecimento de Dados
-        bgg_data = enricher.enrich_game_data(post['title'])
+        # Extração Inteligente do Nome do Jogo via Groq para busca precisa BGG
+        game_name = generator.extract_game_name(post['title'], post['content'])
+        print(f"-> Nome do jogo extraído via Groq: '{game_name}' (Post: '{post['title']}')")
+
+        # Enriquecimento de Dados usando o nome limpo do jogo
+        bgg_data = enricher.enrich_game_data(game_name)
         players = bgg_data.get('players')
         
         # Enriquecimento de Dados (Opcional - Fallback elegante se falhar no BGG)
@@ -72,8 +76,8 @@ def run():
         # Imagem (usa fallback do BGG se necessário)
         image = post.get('image') or bgg_data.get('image')
         
-        # Geração de Resumo via IA
-        summary = generator.generate_summary(post['title'], post['content'])
+        # Geração de Resumo via IA focando no jogo e conteúdo
+        summary = generator.generate_summary(game_name, post['content'])
         
         # Salva na lista
         item = {
@@ -93,10 +97,9 @@ def run():
     # ----------------- PROCESSAMENTO: LANÇAMENTOS PLAYEASY -----------------
     print("\nProcessando lançamentos PlayEasy...")
     for game in raw_pre_sales:
-        # Duplicata removida para pré-vendas: permite recoleção de novos lançamentos
-        # if database.is_duplicate_news(game['link'], game['name']):
-        #     print(f"-> Duplicado (Já enviado antes): '{game['name']}'")
-        #     continue
+        if database.is_duplicate_news(game['link'], game['name']):
+            print(f"-> Duplicado (Já enviado antes): '{game['name']}'")
+            continue
             
         # Enriquecimento
         bgg_data = enricher.enrich_game_data(game['name'])
@@ -176,7 +179,7 @@ if __name__ == '__main__':
     try:
         run()
     except Exception as err:
-        print("🚨 Ocorreu um erro crítico no sistema de orquestração!")
+        print("Erro crítico no sistema de orquestração!")
         traceback.print_exc()
         
         # Telemetria: tenta notificar o usuário por e-mail caso o fluxo principal quebre

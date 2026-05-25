@@ -8,7 +8,7 @@
     },
     {
       "name": "Galápagos Jogos",
-      "url": "https://asmodee.com.br/",
+      "url": "https://mundogalapagos.com.br/",
       "feed_url": "",
       "instagram_handle": "asmodee_br"
     },
@@ -16,7 +16,7 @@
       "name": "Paper Games",
       "url": "https://papergames.com.br/blog/",
       "feed_url": "https://papergames.com.br/feed/",
-      "instagram_handle": "papergamesed"
+      "instagram_handle": "papergamesbr"
     },
     {
       "name": "Grok Games",
@@ -38,7 +38,7 @@
   "settings": {
     "dry_run": false,
     "bgg_timeout_seconds": 10,
-    "request_timeout_seconds": 30,
+    "request_timeout_seconds": 15,
     "max_pre_sale_pages": 2,
     "max_promo_pages": 3
   }

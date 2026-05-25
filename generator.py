@@ -80,17 +80,26 @@ def call_groq(prompt: str, response_json: bool = False) -> str:
     return None
 
 def filter_publisher_post(title: str, content: str) -> bool:
-    """Filtro menos restritivo: aceita todos os posts.
-    Mantém a verificação de API key apenas para compatibilidade; se houver chave,
-    ainda tenta a chamada Groq, mas caso falhe ou não exista, aceita o post.
+    """
+    Usa o Llama 3 via Groq para filtrar posts das editoras (blogs ou Instagram).
+    Retorna True se for um anúncio/novidade de lançamento de jogo, expansão, pré-venda ou evento oficial de jogos.
+    Retorna False para posts sociais genéricos, institucionais vazios, memes, etc.
     """
     if not get_api_key():
-        # Sem API key: aceita tudo
-        return True
-    # Tenta usar a API do Groq, mas se falhar aceita o post
+        # Fallback se não houver API key: busca termos chaves no título
+        keywords = ["lançamento", "anúncio", "chegou", "pré-venda", "novidade", "revelado", "vem aí", "evento", "torneio", "campeonato", "encontro"]
+        title_lower = title.lower()
+        return any(k in title_lower for k in keywords)
+
     prompt = f"""
     Você é um assistente especialista em jogos de tabuleiro (board games) e atua na curadoria do canal "BoardNews BR".
     Analise o título e o conteúdo do post de uma editora (que pode ser do blog oficial ou da rede social Instagram) e classifique se ele é de valor:
+    
+    1. APROVE APENAS se o post for sobre:
+       - Um anúncio de lançamento futuro de jogo ou expansão.
+       - Abertura de pré-vendas ou a chegada física de um jogo/expansão às lojas brasileiras.
+       - Novidades/teasers de novos títulos que estão sendo localizados.
+       - Eventos oficiais de jogos de tabuleiro organizados pela editora (ex: torneios de jogos específicos, campeonatos nacionais/locais, encontros públicos de jogatina com demonstrações, palestras e feiras presenciais).
        
     2. REJEITE imediatamente se for sobre:
        - Posts sociais genéricos, mensagens de "bom dia", datas comemorativas sem relação com jogos.
@@ -159,6 +168,56 @@ def translate_game_name(game_name: str) -> str:
         print(f"Erro ao traduzir nome do jogo '{game_name}' via Groq: {e}")
         
     return game_name
+
+
+def extract_game_name(title: str, content: str = "") -> str:
+    """
+    Usa o Llama 3 via Groq para extrair unicamente o nome limpo do jogo de tabuleiro
+    principal mencionado no título ou conteúdo de um post de editora.
+    """
+    if not get_api_key():
+        # Fallback simples: remove prefixo "Instagram: " e retorna o título
+        cleaned = title
+        if title.startswith("Instagram: "):
+            cleaned = title[len("Instagram: "):]
+        return cleaned.strip()
+
+    prompt = f"""
+    Você é um assistente especialista em jogos de tabuleiro.
+    Dada uma publicação (título e/ou conteúdo) de uma editora, sua tarefa é identificar e extrair unicamente o nome do JOGO DE TABULEIRO principal que é o tema da notícia.
+
+    Regras Estritas:
+    - Retorne APENAS o nome limpo do jogo de tabuleiro, em formato texto puro, sem aspas, sem pontuações desnecessárias, sem nenhuma outra palavra.
+    - Se a notícia mencionar uma expansão, retorne o nome do jogo base ou do jogo completo (ex: "Wingspan: Edição Ásia" ou "Wingspan").
+    - Remova ruídos como "lançamento", "anuncia", "pré-venda", "chegou", "evento de", nomes de editoras (como Devir, Galápagos, Grok, Meeple BR, Paper Games) e quaisquer outras frases explicativas.
+    - Se for impossível extrair um nome de jogo claro, retorne exatamente o título original.
+
+    Exemplos:
+    - Título: "Devir anuncia Unmatched: Sun's Origin para o segundo semestre" -> "Unmatched: Sun's Origin"
+    - Título: "Galápagos lança nova expansão de Wingspan em pré-venda" -> "Wingspan"
+    - Título: "Instagram: Chegou na Paper Games o incrível Project L!" -> "Project L"
+    - Título: "Meeple BR anuncia a chegada de Everdell: Duo" -> "Everdell: Duo"
+
+    Título: "{title}"
+    Conteúdo: "{content}"
+    """
+    
+    try:
+        # Usamos call_groq sem formatação JSON, apenas texto puro, que é muito mais simples para extrações únicas de string
+        res_text = call_groq(prompt, response_json=False)
+        if res_text:
+            cleaned_res = res_text.strip()
+            # Se a resposta vier envolvida em aspas, remove
+            if cleaned_res.startswith('"') and cleaned_res.endswith('"'):
+                cleaned_res = cleaned_res[1:-1].strip()
+            return cleaned_res
+    except Exception as e:
+        print(f"Erro ao extrair nome do jogo via Groq: {e}")
+        
+    cleaned = title
+    if title.startswith("Instagram: "):
+        cleaned = title[len("Instagram: "):]
+    return cleaned.strip()
 
 
 def generate_summary(game_name: str, contextual_info: str = "") -> str:

@@ -13,67 +13,235 @@ def format_price(value: float) -> str:
     return f"R$ {value:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.')
 
 def build_the_news_html(news_list: list, pre_sales: list, promotions: list) -> str:
-    """Gera o template de e-mail HTML responsivo com estilos inline para melhor compatibilidade em clientes de e‑mail."""
+    """
+    Gera o template de e-mail HTML responsivo, minimalista e limpo estilo "The News".
+    """
     current_date = datetime.now().strftime("%d/%m/%Y")
-    # Estilos inline reutilizáveis
-    container_style = "max-width:600px;margin:0 auto;background-color:#ffffff;border:1px solid #e2e8f0;padding:24px;"
-    header_style = "text-align:center;border-bottom:3px double #1a202c;padding-bottom:16px;margin-bottom:24px;"
-    h1_style = "font-family:'Londrina Solid','Impact',-apple-system,sans-serif;font-size:32px;font-weight:900;letter-spacing:1px;margin:0 0 4px 0;text-transform:uppercase;color:#1a202c;"
-    date_style = "font-size:14px;color:#718096;text-transform:uppercase;letter-spacing:2px;margin:0;"
-    section_style = "margin-bottom:40px;"
-    section_title_style = "font-size:18px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;border-bottom:1px solid #1a202c;padding-bottom:6px;margin-bottom:20px;color:#1a202c;"
-    item_style = "margin-bottom:30px;padding-bottom:24px;border-bottom:1px solid #edf2f7;"
-    item_title_style = "font-size:18px;font-weight:700;margin:0 0 10px 0;line-height:1.3;"
-    item_link_style = "color:#1a202c;text-decoration:underline;"
-    item_meta_style = "font-size:13px;color:#e53e3e;font-weight:600;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px;"
-    players_style = "display:inline-block;background-color:#edf2f7;color:#4a5568;font-size:12px;font-weight:600;padding:3px 8px;border-radius:4px;margin-bottom:12px;"
-    content_style = "font-size:15px;line-height:1.6;color:#4a5568;margin:0 0 14px 0;"
-    image_container_style = "text-align:center;margin-bottom:16px;"
-    image_style = "max-width:200px;max-height:200px;height:auto;border-radius:8px;border:1px solid #e2e8f0;object-fit:contain;"
-    badge_style = "background-color:#feb2b2;color:#9b2c2c;font-size:11px;font-weight:bold;padding:2px 6px;border-radius:4px;margin-left:6px;"
-
-    html = f"""<!DOCTYPE html><html lang='pt-BR'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>BoardNews BR</title></head><body><div style='{container_style}'><div style='{header_style}'><h1 style='{h1_style}'>BoardNews BR</h1><p class='date' style='{date_style}'>Notícias &amp; Ofertas • {current_date}</p></div>"""
-
-    # Seção 1 – Novidades das Editoras
+    
+    # 1. Cabeçalho do E-mail
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>BoardNews BR</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                background-color: #f9f9fb;
+                color: #1a202c;
+                margin: 0;
+                padding: 0;
+                -webkit-font-smoothing: antialiased;
+            }}
+            .container {{
+                max-width: 600px;
+                margin: 0 auto;
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                padding: 24px;
+            }}
+            .header {{
+                text-align: center;
+                border-bottom: 3px double #1a202c;
+                padding-bottom: 16px;
+                margin-bottom: 24px;
+            }}
+            .header h1 {{
+                font-family: "Londrina Solid", "Impact", -apple-system, sans-serif;
+                font-size: 32px;
+                font-weight: 900;
+                letter-spacing: 1px;
+                margin: 0 0 4px 0;
+                text-transform: uppercase;
+                color: #1a202c;
+            }}
+            .header .date {{
+                font-size: 14px;
+                color: #718096;
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                margin: 0;
+            }}
+            .section {{
+                margin-bottom: 40px;
+            }}
+            .section-title {{
+                font-size: 18px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+                border-bottom: 1px solid #1a202c;
+                padding-bottom: 6px;
+                margin-bottom: 20px;
+                color: #1a202c;
+            }}
+            .item {{
+                margin-bottom: 30px;
+                padding-bottom: 24px;
+                border-bottom: 1px solid #edf2f7;
+            }}
+            .item:last-child {{
+                border-bottom: none;
+                margin-bottom: 0;
+                padding-bottom: 0;
+            }}
+            .item-title {{
+                font-size: 18px;
+                font-weight: 700;
+                margin: 0 0 10px 0;
+                line-height: 1.3;
+            }}
+            .item-title a {{
+                color: #1a202c;
+                text-decoration: underline;
+            }}
+            .item-meta {{
+                font-size: 13px;
+                color: #e53e3e;
+                font-weight: 600;
+                margin-bottom: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }}
+            .item-players {{
+                display: inline-block;
+                background-color: #edf2f7;
+                color: #4a5568;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 3px 8px;
+                border-radius: 4px;
+                margin-bottom: 12px;
+            }}
+            .item-content {{
+                font-size: 15px;
+                line-height: 1.6;
+                color: #4a5568;
+                margin: 0 0 14px 0;
+            }}
+            .item-image-container {{
+                text-align: center;
+                margin-bottom: 16px;
+            }}
+            .item-image {{
+                max-width: 200px;
+                max-height: 200px;
+                height: auto;
+                border-radius: 8px;
+                border: 1px solid #e2e8f0;
+                object-fit: contain;
+            }}
+            .footer {{
+                text-align: center;
+                border-top: 1px solid #e2e8f0;
+                padding-top: 20px;
+                margin-top: 40px;
+                font-size: 12px;
+                color: #a0aec0;
+                line-height: 1.5;
+            }}
+            .badge-discount {{
+                background-color: #feb2b2;
+                color: #9b2c2c;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 2px 6px;
+                border-radius: 4px;
+                margin-left: 6px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>BoardNews BR</h1>
+                <p class="date">Notícias & Ofertas • {current_date}</p>
+            </div>
+    """
+    
+    # 2. Seção 1: Novidades das Editoras
     if news_list:
-        html += f"<div style='{section_style}'><div style='{section_title_style}'>I. Novidades das Editoras</div>"
+        html += """
+            <div class="section">
+                <div class="section-title">I. Novidades das Editoras</div>
+        """
         for item in news_list:
-            players_html = f'<div style="{players_style}">{item["players"]}</div>' if item.get('players') else ''
-            image_html = f'<div style="{image_container_style}"><img src="{item["image"]}" alt="{item["title"]}" style="{image_style}"></div>' if item.get('image') else ''
-            html += f"<div style='{item_style}'><h3 style='{item_title_style}'><a href='{item["link"]}' target='_blank' style='{item_link_style}'>{item["title"]}</a></h3><div style='{item_meta_style}'>{item["publisher"]}</div>{players_html}{image_html}<div style='{content_style}'>{item["summary"]}</div></div>"
+            players_html = f'<div class="item-players">{item["players"]}</div>' if item.get('players') else ''
+            image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["title"]}"></div>' if item.get('image') else ''
+            
+            html += f"""
+                <div class="item">
+                    <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["title"]}</a></h3>
+                    <div class="item-meta">{item["publisher"]}</div>
+                    {players_html}
+                    {image_html}
+                    <div class="item-content">{item["summary"]}</div>
+                </div>
+            """
         html += "</div>"
-
-    # Seção 2 – Lançamentos / Pré‑venda
+        
+    # 3. Seção 2: Lançamentos / Pré-venda PlayEasy
     if pre_sales:
-        html += f"<div style='{section_style}'><div style='{section_title_style}'>II. Novos Lançamentos em Pré-Venda</div>"
+        html += """
+            <div class="section">
+                <div class="section-title">II. Novos Lançamentos em Pré-Venda</div>
+        """
         for item in pre_sales:
-            players_html = f'<div style="{players_style}">{item["players"]}</div>' if item.get('players') else ''
-            image_html = f'<div style="{image_container_style}"><img src="{item["image"]}" alt="{item["name"]}" style="{image_style}"></div>' if item.get('image') else ''
+            players_html = f'<div class="item-players">{item["players"]}</div>' if item.get('players') else ''
+            image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}"></div>' if item.get('image') else ''
             price_formatted = format_price(item["price"])
-            html += f"<div style='{item_style}'><h3 style='{item_title_style}'><a href='{item["link"]}' target='_blank' style='{item_link_style}'>{item["name"]}</a></h3><div style='{item_meta_style}'>Preço atual: {price_formatted}</div>{players_html}{image_html}<div style='{content_style}'>{item["summary"]}</div></div>"
+            
+            html += f"""
+                <div class="item">
+                    <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["name"]}</a></h3>
+                    <div class="item-meta">Preço atual: {price_formatted}</div>
+                    {players_html}
+                    {image_html}
+                    <div class="item-content">{item["summary"]}</div>
+                </div>
+            """
         html += "</div>"
-
-    # Seção 3 – Promoções
+        
+    # 4. Seção 3: Promoções PlayEasy
     if promotions:
-        html += f"<div style='{section_style}'><div style='{section_title_style}'>III. Ofertas &amp; Promoções Imperdíveis</div>"
-        # Deduplicar promoções por link
-        unique = {}
-        for promo in promotions:
-            link = promo.get('link')
-            if link and link not in unique:
-                unique[link] = promo
-        promos = list(unique.values())
-        for item in promos:
-            players_html = f'<div style="{players_style}">{item["players"]}</div>' if item.get('players') else ''
-            image_html = f'<div style="{image_container_style}"><img src="{item["image"]}" alt="{item["name"]}" style="{image_style}"></div>' if item.get('image') else ''
+        html += """
+            <div class="section">
+                <div class="section-title">III. Ofertas & Promoções Imperdíveis</div>
+        """
+        for item in promotions:
+            players_html = f'<div class="item-players">{item["players"]}</div>' if item.get('players') else ''
+            image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}"></div>' if item.get('image') else ''
             price_from_fmt = format_price(item["price_from"])
             price_to_fmt = format_price(item["price_to"])
-            discount_badge = f'<span style="{badge_style}">-{item["discount"]}% OFF</span>'
-            html += f"<div style='{item_style}'><h3 style='{item_title_style}'><a href='{item["link"]}' target='_blank' style='{item_link_style}'>{item["name"]}</a></h3><div style='{item_meta_style}'>De: <span style='text-decoration:line-through;'>{price_from_fmt}</span> Por: <span style='color:#2b6cb0;font-size:16px;'>{price_to_fmt}</span>{discount_badge}</div>{players_html}{image_html}<div style='{content_style}'>{item["summary"]}</div></div>"
+            
+            html += f"""
+                <div class="item">
+                    <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["name"]}</a></h3>
+                    <div class="item-meta">
+                        De: <span style="text-decoration: line-through;">{price_from_fmt}</span> 
+                        Por: <span style="color: #2b6cb0; font-size: 16px;">{price_to_fmt}</span>
+                        <span class="badge-discount">-{item["discount"]}% OFF</span>
+                    </div>
+                    {players_html}
+                    {image_html}
+                    <div class="item-content">{item["summary"]}</div>
+                </div>
+            """
         html += "</div>"
-
-    # Rodapé
-    html += f"""<div style='text-align:center;border-top:1px solid #e2e8f0;padding-top:20px;margin-top:40px;font-size:12px;color:#a0aec0;line-height:1.5;'><p><strong>BoardNews BR</strong> é o seu boletim de notícias automatizado de jogos de tabuleiro.</p><p>Enviado diariamente de forma autônoma no horário de Brasília.</p><p>Este e‑mail foi gerado e enviado de forma 100% gratuita via GitHub Actions &amp; Resend.</p></div></div></body></html>"""
+        
+    # 5. Rodapé
+    html += f"""
+            <div class="footer">
+                <p><strong>BoardNews BR</strong> é o seu boletim de notícias automatizado de jogos de tabuleiro.</p>
+                <p>Enviado diariamente de forma autônoma no horário de Brasília.</p>
+                <p>Este e-mail foi gerado e enviado de forma 100% gratuita via GitHub Actions & Resend.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
     
     return html
 
