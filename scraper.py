@@ -4,6 +4,7 @@ import re
 import warnings
 import os
 import json
+import time
 from datetime import datetime, timedelta
 from bs4 import XMLParsedAsHTMLWarning
 
@@ -13,15 +14,6 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
                   '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
-
-# Instâncias públicas do RSSHub em ordem de prioridade.
-# O RSSHub converte feeds do Instagram em RSS sem necessidade de login,
-# contornando os bloqueios do Instaloader em ambientes de servidor/CI.
-RSSHUB_INSTANCES = [
-    "https://rsshub.app",
-    "https://rsshub.rssforever.com",
-    "https://hub.slarker.me",
-]
 
 
 def load_settings() -> dict:
@@ -47,134 +39,94 @@ def clean_price(price_str: str) -> float:
 
 
 # ─────────────────────────────────────────────
-# INSTAGRAM — via RSSHub (sem login, sem Instaloader)
+# INSTAGRAM — via instagrapi (login com credenciais do ambiente)
 # ─────────────────────────────────────────────
 
-def _fetch_instagram_rss(handle: str, rsshub_base: str, timeout: int = 15) -> list:
+def _get_instagrapi_client():
     """
-    Busca os posts recentes de um perfil do Instagram via RSSHub.
-    Retorna lista de blocos <item> brutos do RSS ou [] em caso de falha.
+    Cria e autentica um cliente instagrapi usando as credenciais
+    configuradas nas variáveis de ambiente / GitHub Secrets.
+    Retorna o cliente autenticado ou None em caso de falha.
     """
-    url = f"{rsshub_base.rstrip('/')}/instagram/user/{handle}"
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=timeout)
-        if resp.status_code != 200:
-            return []
-        return re.findall(r'<item\b[^>]*>.*?</item>', resp.text, re.DOTALL | re.IGNORECASE)
-    except Exception:
-        return []
+    username = os.environ.get("INSTAGRAM_USERNAME", "").strip()
+    password = os.environ.get("INSTAGRAM_PASSWORD", "").strip()
 
-
-def _parse_instagram_rss_item(item_raw: str, publisher_name: str, time_threshold: datetime) -> dict | None:
-    """
-    Faz parse de um bloco <item> do RSS do Instagram retornado pelo RSSHub.
-    Retorna None se o post for mais antigo que o threshold ou não tiver conteúdo.
-    """
-    soup = BeautifulSoup(item_raw, 'html.parser')
-
-    # Título / caption (primeira linha do post)
-    title_tag = soup.find('title')
-    title_text = title_tag.text.strip() if title_tag else ""
-    title_text = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', title_text).strip()
-
-    if not title_text or title_text.lower() == 'instagram':
+    if not username or not password:
+        print("AVISO: INSTAGRAM_USERNAME ou INSTAGRAM_PASSWORD não configurados.")
+        print("Adicione-os como Secrets no GitHub (Settings → Secrets → Actions).")
         return None
 
-    # Link do post
-    link_tag = soup.find('link')
-    link_text = ""
-    if link_tag:
-        link_text = link_tag.text.strip() or link_tag.get('href', '').strip()
-    link_text = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', link_text).strip()
-
-    # Data de publicação — filtra pela janela de tempo
-    pub_date_tag = soup.find('pubdate')
-    if pub_date_tag:
-        try:
-            from email.utils import parsedate_to_datetime
-            pub_dt = parsedate_to_datetime(pub_date_tag.text.strip()).replace(tzinfo=None)
-            if pub_dt < time_threshold:
-                return None
-        except Exception:
-            pass  # Se não parsear a data, inclui o post por segurança
-
-    # Descrição / caption completo
-    desc_tag = soup.find('description') or soup.find('content:encoded')
-    desc_text = desc_tag.text.strip() if desc_tag else title_text
-    desc_text = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', desc_text).strip()
-    desc_clean = BeautifulSoup(desc_text, 'html.parser').get_text()
-    desc_clean = re.sub(r'\s+', ' ', desc_clean).strip()
-
-    # Imagem do post
-    image_url = ""
-    enclosure = soup.find('enclosure')
-    if enclosure:
-        image_url = enclosure.get('url', '')
-    if not image_url:
-        media = soup.find('media:content') or soup.find(re.compile(r'media:content', re.I))
-        if media:
-            image_url = media.get('url', '')
-
-    display_title = desc_clean[:70].strip() + ("..." if len(desc_clean) > 70 else "")
-
-    return {
-        'publisher': publisher_name,
-        'title': f"Instagram: {display_title}",
-        'link': link_text,
-        'content': desc_clean,
-        'image': image_url,
-        'source_type': 'instagram_rss',
-    }
+    try:
+        from instagrapi import Client
+        cl = Client()
+        # Define um delay aleatório entre requisições para simular comportamento humano
+        cl.delay_range = [1, 3]
+        print(f"Autenticando no Instagram como @{username}...")
+        cl.login(username, password)
+        print("✅ Login no Instagram realizado com sucesso.")
+        return cl
+    except Exception as e:
+        print(f"❌ Erro ao autenticar no Instagram: {e}")
+        return None
 
 
-def scrape_instagram_posts(handle: str, publisher_name: str, hours_window: int = 36) -> list:
+def scrape_instagram_posts(handle: str, publisher_name: str,
+                           hours_window: int = 36, cl=None) -> list:
     """
-    Coleta posts recentes do Instagram de uma editora usando RSSHub como proxy RSS.
+    Coleta posts recentes do Instagram de uma editora usando instagrapi.
 
-    - Testa instâncias RSSHub em cascata até obter resposta.
-    - Filtra posts dentro da janela de tempo configurada.
-    - Retorna no máximo 5 posts, sem login, sem risco de ban.
+    - Recebe um cliente instagrapi já autenticado (cl) para reutilizar sessão.
+    - Filtra posts dentro da janela de horas configurada.
+    - Retorna no máximo 5 posts com título, link, conteúdo e imagem.
     """
-    if not handle:
+    if not handle or cl is None:
         return []
 
-    settings = load_settings()
-    timeout = settings.get('request_timeout_seconds', 15)
-    custom_instance = settings.get('instagram_rsshub_instance', '')
-
-    instances = []
-    if custom_instance:
-        instances.append(custom_instance)
-    for inst in RSSHUB_INSTANCES:
-        if inst not in instances:
-            instances.append(inst)
-
-    print(f"Coletando Instagram de {publisher_name} (@{handle}) via RSSHub...")
-
+    print(f"Coletando Instagram de {publisher_name} (@{handle})...")
     time_threshold = datetime.utcnow() - timedelta(hours=hours_window)
-    items_raw = []
-
-    for instance in instances:
-        items_raw = _fetch_instagram_rss(handle, instance, timeout=timeout)
-        if items_raw:
-            print(f"   -> {len(items_raw)} itens obtidos via {instance}")
-            break
-        else:
-            print(f"   -> Falha em {instance}, tentando próxima instância...")
-
-    if not items_raw:
-        print(f"   -> Nenhuma instância RSSHub respondeu para @{handle}.")
-        return []
-
     posts = []
-    for item_raw in items_raw:
-        parsed = _parse_instagram_rss_item(item_raw, publisher_name, time_threshold)
-        if parsed:
-            posts.append(parsed)
-        if len(posts) >= 5:
-            break
 
-    print(f"   -> {len(posts)} post(s) recentes nas últimas {hours_window}h para @{handle}")
+    try:
+        user_id = cl.user_id_from_username(handle)
+        medias = cl.user_medias(user_id, amount=12)  # Pega os 12 mais recentes para filtrar
+
+        for media in medias:
+            # Filtra pela janela de tempo (media.taken_at é timezone-aware)
+            taken_at = media.taken_at.replace(tzinfo=None)
+            if taken_at < time_threshold:
+                break  # medias vêm em ordem cronológica decrescente
+
+            caption = media.caption_text or ""
+            if not caption:
+                continue
+
+            link = f"https://www.instagram.com/p/{media.code}/"
+            display_title = caption[:70].strip() + ("..." if len(caption) > 70 else "")
+
+            # Tenta obter URL da imagem (thumbnail ou primeira imagem do carrossel)
+            image_url = ""
+            if media.thumbnail_url:
+                image_url = str(media.thumbnail_url)
+            elif media.resources:
+                image_url = str(media.resources[0].thumbnail_url or "")
+
+            posts.append({
+                'publisher': publisher_name,
+                'title': f"Instagram: {display_title}",
+                'link': link,
+                'content': caption,
+                'image': image_url,
+                'source_type': 'instagram',
+            })
+
+            if len(posts) >= 5:
+                break
+
+        print(f"   -> {len(posts)} post(s) recentes nas últimas {hours_window}h para @{handle}")
+
+    except Exception as e:
+        print(f"   -> Erro ao coletar @{handle}: {e}")
+
     return posts
 
 
@@ -184,13 +136,19 @@ def scrape_instagram_posts(handle: str, publisher_name: str, hours_window: int =
 
 def scrape_publishers_news(publishers: list) -> list:
     """
-    Coleta notícias das editoras EXCLUSIVAMENTE via Instagram (RSSHub).
-    RSS de blog e raspagem HTML foram removidos — o Instagram é a fonte
-    principal de anúncios das editoras brasileiras de jogos de tabuleiro.
+    Coleta notícias das editoras EXCLUSIVAMENTE via Instagram (instagrapi).
+    Uma única sessão autenticada é compartilhada entre todas as editoras
+    para evitar múltiplos logins e reduzir risco de bloqueio.
     """
     settings = load_settings()
     hours_window = settings.get('instagram_post_hours_window', 36)
     news_items = []
+
+    # Login único compartilhado por todas as editoras
+    cl = _get_instagrapi_client()
+    if cl is None:
+        print("Instagram indisponível: sem credenciais ou falha no login.")
+        return []
 
     for pub in publishers:
         name = pub.get('name', '')
@@ -200,8 +158,11 @@ def scrape_publishers_news(publishers: list) -> list:
             print(f"[{name}] Sem instagram_handle configurado — ignorando.")
             continue
 
-        ig_posts = scrape_instagram_posts(instagram_handle, name, hours_window=hours_window)
+        ig_posts = scrape_instagram_posts(instagram_handle, name,
+                                          hours_window=hours_window, cl=cl)
         news_items.extend(ig_posts)
+        # Pausa entre perfis para não acionar rate limit
+        time.sleep(2)
 
     return news_items
 
@@ -275,8 +236,7 @@ def scrape_playeasy_promotions(max_pages: int = 3) -> list:
     """
     Raspa os produtos em promoção da PlayEasy.
     Retorna lista de dicts: name, link, price_from, price_to, discount, image.
-    Apenas itens COM desconto real (price_from > price_to) são retornados,
-    evitando que produtos sem desconto apareçam na seção de promoções.
+    Apenas itens COM desconto real (price_from > price_to) são retornados.
     """
     base_url = "https://www.playeasy.com.br/promocoes.html"
     results = []

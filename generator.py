@@ -234,7 +234,8 @@ def generate_summary(game_name: str, contextual_info: str = "") -> str:
     
     Instruções estritas:
     - O resumo deve focar no tema do jogo e em como funciona a sua proposta de gameplay/estratégia.
-    - O resumo deve conter no máximo 2 parágrafos.
+    - LIMITE ABSOLUTO: no máximo 100 palavras. Seja conciso e direto.
+    - NÃO use mais de 1 parágrafo.
     - Linguagem: Português do Brasil (PT-BR).
     - Evite clichês exagerados. Seja informativo e empolgante.
 
