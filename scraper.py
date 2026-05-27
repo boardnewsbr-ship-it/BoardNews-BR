@@ -332,6 +332,13 @@ def scrape_catarse(days_window: int = 2) -> list:
 
     if not cards:
         print("   -> Nenhum card encontrado no Catarse após renderização JS.")
+        # Debug: imprime primeiras 3000 chars do HTML para diagnóstico de seletores
+        debug_soup = BeautifulSoup(html, 'html.parser')
+        print("   -> DEBUG HTML (primeiros elementos com classe):")
+        for tag in debug_soup.find_all(True, class_=True)[:30]:
+            classes = ' '.join(tag.get('class', []))[:80]
+            text = tag.get_text(' ', strip=True)[:60]
+            print(f"      <{tag.name} class=\"{classes}\"> {text}")
         return []
 
     print(f"   -> {len(cards)} cards encontrados.")
@@ -339,9 +346,11 @@ def scrape_catarse(days_window: int = 2) -> list:
     for card in cards:
         name_tag = card.select_one('h2, h3, .project-name, .title, strong, a')
         if not name_tag:
+            print(f"      -> Card sem name_tag, pulando")
             continue
         name = name_tag.get_text(strip=True)
         if not name or len(name) < 3:
+            print(f"      -> Card com nome vazio/curto: '{name}'")
             continue
 
         link_tag = card.find('a')
@@ -364,7 +373,10 @@ def scrape_catarse(days_window: int = 2) -> list:
                 else:
                     start_date = parsed
 
+        print(f"      -> Card: '{name}' | start={start_date} | cutoff={cutoff}")
+
         if start_date and start_date < cutoff:
+            print(f"      -> Ignorado por data de início antiga")
             continue
 
         desc_tag = card.select_one('p, .description, .excerpt')
@@ -374,8 +386,10 @@ def scrape_catarse(days_window: int = 2) -> list:
         combined = (name + ' ' + description).lower()
         keywords = ['tabuleiro', 'board game', 'jogo', 'cartas', 'rpg',
                     'dado', 'fichas', 'miniatura', 'estratégia', 'cooperativo']
-        if not any(kw in combined for kw in keywords):
-            print(f"   -> Ignorado (não é jogo de tabuleiro): '{name}'")
+        matched = [kw for kw in keywords if kw in combined]
+        print(f"      -> Keywords encontradas: {matched}")
+        if not matched:
+            print(f"      -> Ignorado (não é jogo de tabuleiro): '{name}'")
             continue
 
         projects.append({
@@ -428,6 +442,13 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
 
     if not cards:
         print("   -> Nenhum card de projeto encontrado no Meeple Starter.")
+        # Debug: imprime elementos com classe para diagnóstico
+        debug_soup = BeautifulSoup(html, 'html.parser')
+        print("   -> DEBUG HTML (primeiros elementos com classe):")
+        for tag in debug_soup.find_all(True, class_=True)[:30]:
+            classes = ' '.join(tag.get('class', []))[:80]
+            text = tag.get_text(' ', strip=True)[:60]
+            print(f"      <{tag.name} class=\"{classes}\"> {text}")
         return []
 
     print(f"   -> {len(cards)} cards encontrados.")
@@ -500,59 +521,127 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
 # PLAYEASY — Pré-vendas
 # ─────────────────────────────────────────────
 
+def _parse_playeasy_products(html: str, mode: str) -> list:
+    """
+    Extrai produtos do HTML da PlayEasy (já renderizado pelo Selenium).
+    mode: 'pre-sale' ou 'promotion'
+    Tenta múltiplos seletores para ser resiliente a mudanças de layout.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    results = []
+
+    # Tenta seletores em ordem de prioridade
+    products = (
+        soup.select('ul.products-grid li.item') or
+        soup.select('li.item') or
+        soup.select('div.product-item') or
+        soup.select('div[class*="product-item"]') or
+        soup.select('div.item') or
+        soup.select('article.product')
+    )
+
+    if not products:
+        print(f"   -> Nenhum produto encontrado com os seletores conhecidos.")
+        # Debug: mostra primeiras tags com classe para diagnóstico
+        for tag in soup.find_all(['li', 'div', 'article'], class_=True)[:5]:
+            print(f"      <{tag.name} class=\"{' '.join(tag.get('class',[]))[:60]}\">")
+        return []
+
+    print(f"   -> {len(products)} produto(s) encontrados.")
+
+    for product in products:
+        # Nome e link
+        name_tag = (
+            product.select_one('h2.product-name a') or
+            product.select_one('h2 a') or
+            product.select_one('h3 a') or
+            product.select_one('a.product-name') or
+            product.select_one('.product-name a') or
+            product.select_one('a[title]')
+        )
+        if not name_tag:
+            continue
+        name = name_tag.get('title', name_tag.get_text(strip=True)).strip()
+        link = name_tag.get('href', '').strip()
+
+        # Imagem
+        img_tag = (
+            product.select_one('a.product-image img') or
+            product.select_one('img.product-image') or
+            product.select_one('img')
+        )
+        img_url = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
+
+        if mode == 'pre-sale':
+            price = 0.0
+            price_tag = (
+                product.select_one('.regular-price .price') or
+                product.select_one('.special-price .price') or
+                product.select_one('.price-box .price') or
+                product.select_one('[class*="price"]')
+            )
+            if price_tag:
+                price = clean_price(price_tag.get_text())
+            results.append({
+                'name': name, 'link': link,
+                'price': price, 'image': img_url,
+                'type': 'pre-sale',
+            })
+
+        elif mode == 'promotion':
+            price_from = 0.0
+            price_to = 0.0
+            old_tag = product.select_one('.old-price .price')
+            special_tag = product.select_one('.special-price .price')
+
+            if old_tag and special_tag:
+                price_from = clean_price(old_tag.get_text())
+                price_to = clean_price(special_tag.get_text())
+            else:
+                price_tag = (
+                    product.select_one('.regular-price .price') or
+                    product.select_one('.price-box .price')
+                )
+                if price_tag:
+                    price_to = clean_price(price_tag.get_text())
+                    price_from = price_to
+
+            # Só inclui se tiver desconto real
+            if price_from <= 0 or price_to <= 0 or price_from <= price_to:
+                continue
+
+            discount = int(round((1 - price_to / price_from) * 100))
+            results.append({
+                'name': name, 'link': link,
+                'price_from': price_from, 'price_to': price_to,
+                'discount': discount, 'image': img_url,
+                'type': 'promotion',
+            })
+
+    return results
+
+
 def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
     """
-    Raspa os produtos em pré-venda da PlayEasy.
-    Retorna lista de dicts: name, link, price, image.
+    Raspa os produtos em pré-venda da PlayEasy via Selenium.
+    URL atualizada: /vitrine/pre-venda.html
     """
-    base_url = "https://www.playeasy.com.br/vitrine-nao-excluir/produtos-em-pre-venda.html"
+    base_url = "https://www.playeasy.com.br/vitrine/pre-venda.html"
     results = []
 
     for page in range(1, max_pages + 1):
         url = f"{base_url}?p={page}" if page > 1 else base_url
         print(f"Raspando pré-vendas: {url}")
 
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=15)
-            if response.status_code != 200:
-                print(f"Erro ao acessar {url}: Status {response.status_code}")
-                break
-
-            soup = BeautifulSoup(response.content, 'html.parser')
-            products = soup.select('ul.products-grid li.item')
-
-            if not products:
-                print("Nenhum produto encontrado nesta página de pré-vendas.")
-                break
-
-            for product in products:
-                name_tag = product.select_one('h2.product-name a')
-                if not name_tag:
-                    continue
-                name = name_tag.get('title', name_tag.text).strip()
-                link = name_tag.get('href', '').strip()
-
-                img_tag = product.select_one('a.product-image img')
-                img_url = img_tag.get('src', '') if img_tag else ''
-
-                price = 0.0
-                price_tag = product.select_one('.regular-price .price')
-                if not price_tag:
-                    price_tag = product.select_one('.price-box .price')
-                if price_tag:
-                    price = clean_price(price_tag.text)
-
-                results.append({
-                    'name': name,
-                    'link': link,
-                    'price': price,
-                    'image': img_url,
-                    'type': 'pre-sale',
-                })
-
-        except Exception as e:
-            print(f"Erro ao raspar pré-vendas (página {page}): {e}")
+        html = _selenium_get(url, wait_seconds=4)
+        if not html:
+            print("   -> Selenium indisponível. Pré-vendas ignoradas.")
             break
+
+        page_results = _parse_playeasy_products(html, mode='pre-sale')
+        if not page_results:
+            break
+        results.extend(page_results)
 
     return results
 
@@ -563,9 +652,8 @@ def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
 
 def scrape_playeasy_promotions(max_pages: int = 3) -> list:
     """
-    Raspa os produtos em promoção da PlayEasy.
-    Retorna lista de dicts: name, link, price_from, price_to, discount, image.
-    Apenas itens COM desconto real (price_from > price_to) são retornados.
+    Raspa os produtos em promoção da PlayEasy via Selenium.
+    Retorna apenas itens COM desconto real (price_from > price_to).
     """
     base_url = "https://www.playeasy.com.br/promocoes.html"
     results = []
@@ -574,62 +662,14 @@ def scrape_playeasy_promotions(max_pages: int = 3) -> list:
         url = f"{base_url}?p={page}" if page > 1 else base_url
         print(f"Raspando promoções: {url}")
 
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=15)
-            if response.status_code != 200:
-                print(f"Erro ao acessar {url}: Status {response.status_code}")
-                break
-
-            soup = BeautifulSoup(response.content, 'html.parser')
-            products = soup.select('ul.products-grid li.item')
-
-            if not products:
-                print("Nenhum produto encontrado nesta página de promoções.")
-                break
-
-            for product in products:
-                name_tag = product.select_one('h2.product-name a')
-                if not name_tag:
-                    continue
-                name = name_tag.get('title', name_tag.text).strip()
-                link = name_tag.get('href', '').strip()
-
-                img_tag = product.select_one('a.product-image img')
-                img_url = img_tag.get('src', '') if img_tag else ''
-
-                price_from = 0.0
-                price_to = 0.0
-
-                old_price_tag = product.select_one('.old-price .price')
-                special_price_tag = product.select_one('.special-price .price')
-
-                if old_price_tag and special_price_tag:
-                    price_from = clean_price(old_price_tag.text)
-                    price_to = clean_price(special_price_tag.text)
-                else:
-                    price_tag = (product.select_one('.regular-price .price')
-                                 or product.select_one('.price-box .price'))
-                    if price_tag:
-                        price_to = clean_price(price_tag.text)
-                        price_from = price_to
-
-                if price_from <= 0 or price_to <= 0 or price_from <= price_to:
-                    continue
-
-                discount = int(round((1 - price_to / price_from) * 100))
-
-                results.append({
-                    'name': name,
-                    'link': link,
-                    'price_from': price_from,
-                    'price_to': price_to,
-                    'discount': discount,
-                    'image': img_url,
-                    'type': 'promotion',
-                })
-
-        except Exception as e:
-            print(f"Erro ao raspar promoções (página {page}): {e}")
+        html = _selenium_get(url, wait_seconds=4)
+        if not html:
+            print("   -> Selenium indisponível. Promoções ignoradas.")
             break
+
+        page_results = _parse_playeasy_products(html, mode='promotion')
+        if not page_results:
+            break
+        results.extend(page_results)
 
     return results
