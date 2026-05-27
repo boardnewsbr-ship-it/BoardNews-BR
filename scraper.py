@@ -5,7 +5,7 @@ import warnings
 import os
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from bs4 import XMLParsedAsHTMLWarning
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -38,133 +38,408 @@ def clean_price(price_str: str) -> float:
         return 0.0
 
 
-# ─────────────────────────────────────────────
-# INSTAGRAM — via instagrapi (login com credenciais do ambiente)
-# ─────────────────────────────────────────────
-
-def _get_instagrapi_client():
+def _parse_br_date(date_str: str) -> date | None:
     """
-    Cria e autentica um cliente instagrapi usando as credenciais
-    configuradas nas variáveis de ambiente / GitHub Secrets.
-    Retorna o cliente autenticado ou None em caso de falha.
+    Tenta parsear datas nos formatos comuns encontrados em sites BR.
+    Retorna um objeto date ou None se não conseguir.
     """
-    username = os.environ.get("INSTAGRAM_USERNAME", "").strip()
-    password = os.environ.get("INSTAGRAM_PASSWORD", "").strip()
+    date_str = date_str.strip()
+    # Mapeamento de meses em PT-BR
+    meses = {
+        'jan': 1, 'fev': 2, 'mar': 3, 'abr': 4, 'mai': 5, 'jun': 6,
+        'jul': 7, 'ago': 8, 'set': 9, 'out': 10, 'nov': 11, 'dez': 12,
+        'janeiro': 1, 'fevereiro': 2, 'março': 3, 'abril': 4, 'maio': 5,
+        'junho': 6, 'julho': 7, 'agosto': 8, 'setembro': 9, 'outubro': 10,
+        'novembro': 11, 'dezembro': 12,
+    }
 
-    if not username or not password:
-        print("AVISO: INSTAGRAM_USERNAME ou INSTAGRAM_PASSWORD não configurados.")
-        print("Adicione-os como Secrets no GitHub (Settings → Secrets → Actions).")
-        return None
+    for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%d/%m/%y'):
+        try:
+            return datetime.strptime(date_str, fmt).date()
+        except ValueError:
+            pass
 
-    try:
-        from instagrapi import Client
-        cl = Client()
-        # Define um delay aleatório entre requisições para simular comportamento humano
-        cl.delay_range = [1, 3]
-        print(f"Autenticando no Instagram como @{username}...")
-        cl.login(username, password)
-        print("✅ Login no Instagram realizado com sucesso.")
-        return cl
-    except Exception as e:
-        print(f"❌ Erro ao autenticar no Instagram: {e}")
-        return None
+    # "15 de maio de 2025" ou "15 mai 2025"
+    m = re.search(r'(\d{1,2})\s+(?:de\s+)?([a-záãéêíóôõú]+)\.?\s+(?:de\s+)?(\d{4})',
+                  date_str, re.IGNORECASE)
+    if m:
+        dia, mes_str, ano = int(m.group(1)), m.group(2).lower().rstrip('.'), int(m.group(3))
+        mes = meses.get(mes_str[:3])
+        if mes:
+            try:
+                return date(ano, mes, dia)
+            except ValueError:
+                pass
 
-
-def scrape_instagram_posts(handle: str, publisher_name: str,
-                           hours_window: int = 36, cl=None) -> list:
-    """
-    Coleta posts recentes do Instagram de uma editora usando instagrapi.
-
-    - Recebe um cliente instagrapi já autenticado (cl) para reutilizar sessão.
-    - Filtra posts dentro da janela de horas configurada.
-    - Retorna no máximo 5 posts com título, link, conteúdo e imagem.
-    """
-    if not handle or cl is None:
-        return []
-
-    print(f"Coletando Instagram de {publisher_name} (@{handle})...")
-    time_threshold = datetime.utcnow() - timedelta(hours=hours_window)
-    posts = []
-
-    try:
-        user_id = cl.user_id_from_username(handle)
-        medias = cl.user_medias(user_id, amount=12)  # Pega os 12 mais recentes para filtrar
-
-        for media in medias:
-            # Filtra pela janela de tempo (media.taken_at é timezone-aware)
-            taken_at = media.taken_at.replace(tzinfo=None)
-            if taken_at < time_threshold:
-                break  # medias vêm em ordem cronológica decrescente
-
-            caption = media.caption_text or ""
-            if not caption:
-                continue
-
-            link = f"https://www.instagram.com/p/{media.code}/"
-            display_title = caption[:70].strip() + ("..." if len(caption) > 70 else "")
-
-            # Tenta obter URL da imagem (thumbnail ou primeira imagem do carrossel)
-            image_url = ""
-            if media.thumbnail_url:
-                image_url = str(media.thumbnail_url)
-            elif media.resources:
-                image_url = str(media.resources[0].thumbnail_url or "")
-
-            posts.append({
-                'publisher': publisher_name,
-                'title': f"Instagram: {display_title}",
-                'link': link,
-                'content': caption,
-                'image': image_url,
-                'source_type': 'instagram',
-            })
-
-            if len(posts) >= 5:
-                break
-
-        print(f"   -> {len(posts)} post(s) recentes nas últimas {hours_window}h para @{handle}")
-
-    except Exception as e:
-        print(f"   -> Erro ao coletar @{handle}: {e}")
-
-    return posts
+    return None
 
 
 # ─────────────────────────────────────────────
-# EDITORAS — somente Instagram
+# LUDONEWS — Ludopedia
 # ─────────────────────────────────────────────
 
-def scrape_publishers_news(publishers: list) -> list:
+def scrape_ludonews(days_window: int = 2) -> list:
     """
-    Coleta notícias das editoras EXCLUSIVAMENTE via Instagram (instagrapi).
-    Uma única sessão autenticada é compartilhada entre todas as editoras
-    para evitar múltiplos logins e reduzir risco de bloqueio.
+    Coleta notícias do canal LudoNews da Ludopedia.
+    Retorna apenas notícias publicadas nos últimos `days_window` dias.
+
+    A Ludopedia não oferece RSS para canais, então fazemos raspagem HTML
+    da página de listagem do canal e acessamos cada artigo individualmente.
     """
-    settings = load_settings()
-    hours_window = settings.get('instagram_post_hours_window', 36)
+    url = "https://ludopedia.com.br/canal/ludonews"
+    print(f"Coletando LudoNews da Ludopedia ({url})...")
+
+    cutoff = datetime.now().date() - timedelta(days=days_window)
     news_items = []
 
-    # Login único compartilhado por todas as editoras
-    cl = _get_instagrapi_client()
-    if cl is None:
-        print("Instagram indisponível: sem credenciais ou falha no login.")
-        return []
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        if response.status_code != 200:
+            print(f"   -> Erro HTTP {response.status_code} ao acessar LudoNews.")
+            return []
 
-    for pub in publishers:
-        name = pub.get('name', '')
-        instagram_handle = pub.get('instagram_handle', '')
+        soup = BeautifulSoup(response.content, 'html.parser')
 
-        if not instagram_handle:
-            print(f"[{name}] Sem instagram_handle configurado — ignorando.")
-            continue
+        # Cada notícia está em um card/artigo na listagem
+        # Tenta seletores comuns de listagem de posts da Ludopedia
+        cards = (
+            soup.select('div.post-item') or
+            soup.select('article') or
+            soup.select('div.card') or
+            soup.select('div.blog-post') or
+            soup.select('li.item-post')
+        )
 
-        ig_posts = scrape_instagram_posts(instagram_handle, name,
-                                          hours_window=hours_window, cl=cl)
-        news_items.extend(ig_posts)
-        # Pausa entre perfis para não acionar rate limit
-        time.sleep(2)
+        if not cards:
+            # Fallback: coleta todos os links que parecem ser posts do canal
+            all_links = soup.find_all('a', href=re.compile(r'/topico/|/post/|/noticia/'))
+            cards_fallback = []
+            seen = set()
+            for a in all_links:
+                href = a.get('href', '')
+                if href not in seen and len(a.text.strip()) > 15:
+                    seen.add(href)
+                    cards_fallback.append({'link': href, 'title': a.text.strip()})
+            print(f"   -> {len(cards_fallback)} links encontrados via fallback.")
+
+            for item in cards_fallback[:10]:
+                link = item['link']
+                if not link.startswith('http'):
+                    link = 'https://ludopedia.com.br' + link
+                news_items.append({
+                    'title': item['title'],
+                    'link': link,
+                    'content': item['title'],
+                    'image': '',
+                    'published_date': None,
+                    'source': 'ludonews',
+                })
+            return news_items
+
+        print(f"   -> {len(cards)} cards encontrados na listagem.")
+
+        for card in cards[:15]:
+            # Título e link
+            title_tag = card.select_one('h1 a, h2 a, h3 a, a.post-title, a.titulo, .card-title a')
+            if not title_tag:
+                title_tag = card.find('a')
+            if not title_tag:
+                continue
+
+            title = title_tag.get_text(strip=True)
+            link = title_tag.get('href', '')
+            if not link.startswith('http'):
+                link = 'https://ludopedia.com.br' + link
+
+            # Data de publicação
+            pub_date = None
+            date_tag = card.select_one('time, .date, .post-date, .data, span.small')
+            if date_tag:
+                date_text = date_tag.get('datetime', '') or date_tag.get_text(strip=True)
+                pub_date = _parse_br_date(date_text)
+
+            # Filtra pela janela de tempo (se conseguiu parsear a data)
+            if pub_date and pub_date < cutoff:
+                continue
+
+            # Snippet / resumo do card
+            snippet_tag = card.select_one('p, .excerpt, .resumo, .card-text')
+            content = snippet_tag.get_text(strip=True) if snippet_tag else title
+
+            # Imagem do card
+            img_tag = card.select_one('img')
+            image = img_tag.get('src', '') if img_tag else ''
+
+            news_items.append({
+                'title': title,
+                'link': link,
+                'content': content,
+                'image': image,
+                'published_date': pub_date,
+                'source': 'ludonews',
+            })
+
+        print(f"   -> {len(news_items)} notícia(s) recentes (últimos {days_window} dias).")
+
+    except Exception as e:
+        print(f"   -> Erro ao raspar LudoNews: {e}")
 
     return news_items
+
+
+# ─────────────────────────────────────────────
+# FINANCIAMENTO COLETIVO — Catarse
+# ─────────────────────────────────────────────
+
+def scrape_catarse(days_window: int = 2) -> list:
+    """
+    Coleta projetos de jogos de tabuleiro lançados recentemente no Catarse.
+    URL: categoria 14 (Jogos), filtro recent, mode não-assinatura.
+    Retorna apenas projetos cujo início de campanha foi nos últimos `days_window` dias.
+    """
+    url = ("https://www.catarse.me/explore"
+           "?ref=home_projects_we_love&mode=not_sub&category_id=14&filter=recent")
+    print(f"Coletando projetos Catarse ({url})...")
+
+    cutoff = datetime.now().date() - timedelta(days=days_window)
+    projects = []
+
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        if response.status_code != 200:
+            print(f"   -> Erro HTTP {response.status_code} ao acessar Catarse.")
+            return []
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # O Catarse é um SPA (React) — tenta encontrar dados pre-renderizados ou cards
+        cards = (
+            soup.select('div.card-project') or
+            soup.select('div[data-content="project-card"]') or
+            soup.select('article.project') or
+            soup.select('div.project-card') or
+            soup.select('div.w-col')
+        )
+
+        if not cards:
+            # Fallback: busca links de projetos na página
+            all_links = soup.find_all('a', href=re.compile(r'/projects/|/catarse/'))
+            seen = set()
+            for a in all_links:
+                href = a.get('href', '')
+                text = a.get_text(strip=True)
+                if href not in seen and len(text) > 5:
+                    seen.add(href)
+                    if not href.startswith('http'):
+                        href = 'https://www.catarse.me' + href
+                    projects.append({
+                        'name': text,
+                        'link': href,
+                        'description': text,
+                        'image': '',
+                        'end_date': None,
+                        'start_date': None,
+                        'platform': 'catarse',
+                    })
+            print(f"   -> {len(projects)} projetos via fallback de links.")
+            return projects[:10]
+
+        print(f"   -> {len(cards)} cards encontrados.")
+
+        for card in cards:
+            # Nome do projeto
+            name_tag = card.select_one('h2, h3, .project-name, .title, strong')
+            if not name_tag:
+                continue
+            name = name_tag.get_text(strip=True)
+            if not name:
+                continue
+
+            # Link
+            link_tag = card.find('a')
+            link = link_tag.get('href', '') if link_tag else ''
+            if link and not link.startswith('http'):
+                link = 'https://www.catarse.me' + link
+
+            # Imagem
+            img_tag = card.find('img')
+            image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
+
+            # Datas (início e fim)
+            start_date = None
+            end_date = None
+            date_tags = card.select('time, .date, .expires, .deadline, span')
+            for dt in date_tags:
+                dt_text = dt.get('datetime', '') or dt.get_text(strip=True)
+                parsed = _parse_br_date(dt_text)
+                if parsed:
+                    if parsed >= datetime.now().date():
+                        end_date = parsed
+                    else:
+                        start_date = parsed
+
+            # Filtra: só projetos iniciados nos últimos days_window dias
+            if start_date and start_date < cutoff:
+                continue
+
+            # Descrição
+            desc_tag = card.select_one('p, .description, .excerpt')
+            description = desc_tag.get_text(strip=True) if desc_tag else name
+
+            # Verifica se é jogo de tabuleiro (filtro extra por texto)
+            combined = (name + ' ' + description).lower()
+            board_game_keywords = [
+                'tabuleiro', 'board game', 'jogo', 'cartas', 'rpg',
+                'dado', 'fichas', 'miniatura', 'estratégia', 'cooperativo',
+            ]
+            if not any(kw in combined for kw in board_game_keywords):
+                print(f"   -> Ignorado (não parece jogo de tabuleiro): '{name}'")
+                continue
+
+            projects.append({
+                'name': name,
+                'link': link,
+                'description': description,
+                'image': image,
+                'end_date': end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
+                'start_date': start_date,
+                'platform': 'catarse',
+            })
+
+        print(f"   -> {len(projects)} projeto(s) recentes no Catarse.")
+
+    except Exception as e:
+        print(f"   -> Erro ao raspar Catarse: {e}")
+
+    return projects
+
+
+# ─────────────────────────────────────────────
+# FINANCIAMENTO COLETIVO — Meeple Starter
+# ─────────────────────────────────────────────
+
+def scrape_meeplestarter(days_window: int = 2) -> list:
+    """
+    Coleta projetos EM ANDAMENTO do Meeple Starter lançados recentemente.
+    Ignora projetos finalizados (percentual = 100% e prazo encerrado) e
+    projetos que ainda não iniciaram (percentual = 0% sem data de início passada).
+    Retorna apenas os que iniciaram nos últimos `days_window` dias.
+    """
+    url = "https://meeplestarter.com.br/projetos"
+    print(f"Coletando projetos Meeple Starter ({url})...")
+
+    cutoff = datetime.now().date() - timedelta(days=days_window)
+    today = datetime.now().date()
+    projects = []
+
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        if response.status_code != 200:
+            print(f"   -> Erro HTTP {response.status_code} ao acessar Meeple Starter.")
+            return []
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Meeple Starter usa cards de projeto
+        cards = (
+            soup.select('div.project-card') or
+            soup.select('div.card') or
+            soup.select('article') or
+            soup.select('div.projeto') or
+            soup.select('div[class*="project"]')
+        )
+
+        if not cards:
+            all_links = soup.find_all('a', href=re.compile(r'/projeto/|/p/'))
+            seen = set()
+            for a in all_links:
+                href = a.get('href', '')
+                text = a.get_text(strip=True)
+                if href not in seen and len(text) > 5:
+                    seen.add(href)
+                    if not href.startswith('http'):
+                        href = 'https://meeplestarter.com.br' + href
+                    projects.append({
+                        'name': text,
+                        'link': href,
+                        'description': text,
+                        'image': '',
+                        'end_date': None,
+                        'platform': 'meeplestarter',
+                    })
+            print(f"   -> {len(projects)} projetos via fallback de links.")
+            return projects[:10]
+
+        print(f"   -> {len(cards)} cards encontrados.")
+
+        for card in cards:
+            # Nome
+            name_tag = card.select_one('h2, h3, h4, .project-title, .title, strong, a')
+            if not name_tag:
+                continue
+            name = name_tag.get_text(strip=True)
+            if not name:
+                continue
+
+            # Link
+            link_tag = card.find('a')
+            link = link_tag.get('href', '') if link_tag else ''
+            if link and not link.startswith('http'):
+                link = 'https://meeplestarter.com.br' + link
+
+            # Imagem
+            img_tag = card.find('img')
+            image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
+
+            # Status: detecta se está finalizado ou não iniciado
+            card_text = card.get_text(' ', strip=True).lower()
+            if any(w in card_text for w in ['finalizado', 'encerrado', 'concluído']):
+                print(f"   -> Ignorado (finalizado): '{name}'")
+                continue
+            if any(w in card_text for w in ['em breve', 'aguardando', 'não iniciado']):
+                print(f"   -> Ignorado (ainda não iniciou): '{name}'")
+                continue
+
+            # Datas
+            start_date = None
+            end_date = None
+            all_dates = []
+            date_tags = card.select('time, .date, .prazo, .deadline, span, p')
+            for dt in date_tags:
+                raw = dt.get('datetime', '') or dt.get_text(strip=True)
+                parsed = _parse_br_date(raw)
+                if parsed:
+                    all_dates.append(parsed)
+
+            if all_dates:
+                future_dates = [d for d in all_dates if d >= today]
+                past_dates = [d for d in all_dates if d < today]
+                end_date = min(future_dates) if future_dates else None
+                start_date = max(past_dates) if past_dates else None
+
+            # Filtra: só projetos que iniciaram nos últimos days_window dias
+            if start_date and start_date < cutoff:
+                print(f"   -> Ignorado (início há mais de {days_window} dias): '{name}'")
+                continue
+
+            desc_tag = card.select_one('p, .description, .resumo')
+            description = desc_tag.get_text(strip=True) if desc_tag else name
+
+            projects.append({
+                'name': name,
+                'link': link,
+                'description': description,
+                'image': image,
+                'end_date': end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
+                'platform': 'meeplestarter',
+            })
+
+        print(f"   -> {len(projects)} projeto(s) ativos recentes no Meeple Starter.")
+
+    except Exception as e:
+        print(f"   -> Erro ao raspar Meeple Starter: {e}")
+
+    return projects
 
 
 # ─────────────────────────────────────────────
@@ -284,7 +559,6 @@ def scrape_playeasy_promotions(max_pages: int = 3) -> list:
                         price_to = clean_price(price_tag.text)
                         price_from = price_to
 
-                # Só inclui se tiver desconto real
                 if price_from <= 0 or price_to <= 0 or price_from <= price_to:
                     continue
 

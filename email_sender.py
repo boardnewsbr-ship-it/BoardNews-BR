@@ -12,10 +12,14 @@ def format_price(value: float) -> str:
         return "R$ --"
     return f"R$ {value:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.')
 
-def build_the_news_html(news_list: list, pre_sales: list, promotions: list) -> str:
+def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
+                        crowdfunding: list = None) -> str:
     """
     Gera o template de e-mail HTML responsivo, minimalista e limpo estilo "The News".
+    Seções: I. Notícias LudoNews | II. Pré-Vendas | III. Promoções | IV. Financiamentos
     """
+    if crowdfunding is None:
+        crowdfunding = []
     current_date = datetime.now().strftime("%d/%m/%Y")
     
     # 1. Cabeçalho do E-mail
@@ -161,21 +165,19 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list) -> s
             </div>
     """
     
-    # 2. Seção 1: Novidades das Editoras
+    # 2. Seção 1: Notícias LudoNews
     if news_list:
         html += """
             <div class="section">
-                <div class="section-title">I. Novidades das Editoras</div>
+                <div class="section-title">I. Notícias — LudoNews</div>
         """
         for item in news_list:
-            players_html = f'<div class="item-players">{item["players"]}</div>' if item.get('players') else ''
             image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["title"]}"></div>' if item.get('image') else ''
-            
+
             html += f"""
                 <div class="item">
                     <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["title"]}</a></h3>
-                    <div class="item-meta">{item["publisher"]}</div>
-                    {players_html}
+                    <div class="item-meta">LudoNews / Ludopedia</div>
                     {image_html}
                     <div class="item-content">{item["summary"]}</div>
                 </div>
@@ -231,7 +233,46 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list) -> s
             """
         html += "</div>"
         
-    # 5. Rodapé
+    # 5. Seção 4: Financiamentos Coletivos
+    if crowdfunding:
+        # Separa por plataforma
+        catarse_items    = [p for p in crowdfunding if p.get('platform') == 'catarse']
+        meeple_items     = [p for p in crowdfunding if p.get('platform') == 'meeplestarter']
+
+        html += """
+            <div class="section">
+                <div class="section-title">IV. Financiamentos Coletivos</div>
+        """
+
+        if catarse_items:
+            html += '<p style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#718096;margin:0 0 12px 0;">📦 Catarse</p>'
+            for item in catarse_items:
+                image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}"></div>' if item.get('image') else ''
+                html += f"""
+                    <div class="item">
+                        <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["name"]}</a></h3>
+                        <div class="item-meta">Encerra em: {item["end_date"]}</div>
+                        {image_html}
+                        <div class="item-content">{item["summary"]}</div>
+                    </div>
+                """
+
+        if meeple_items:
+            html += '<p style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#718096;margin:16px 0 12px 0;">🎲 Meeple Starter</p>'
+            for item in meeple_items:
+                image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}"></div>' if item.get('image') else ''
+                html += f"""
+                    <div class="item">
+                        <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["name"]}</a></h3>
+                        <div class="item-meta">Encerra em: {item["end_date"]}</div>
+                        {image_html}
+                        <div class="item-content">{item["summary"]}</div>
+                    </div>
+                """
+
+        html += "</div>"
+
+    # 6. Rodapé
     html += f"""
             <div class="footer">
                 <p><strong>BoardNews BR</strong> é o seu boletim de notícias automatizado de jogos de tabuleiro.</p>

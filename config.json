@@ -10,7 +10,7 @@
       "name": "Galápagos Jogos",
       "url": "https://mundogalapagos.com.br/",
       "feed_url": "",
-      "instagram_handle": "asmodee_br"
+      "instagram_handle": "galapagosjogos"
     },
     {
       "name": "Paper Games",
@@ -29,6 +29,18 @@
       "url": "https://meeplebr.com/blog/",
       "feed_url": "https://meeplebr.com/feed/",
       "instagram_handle": "meeplebr"
+    },
+    {
+      "name": "Redbox Editora",
+      "url": "https://www.redboxeditora.com.br/",
+      "feed_url": "",
+      "instagram_handle": "redbox.editora"
+    },
+    {
+      "name": "Buró Jogos",
+      "url": "https://burojogos.com.br/",
+      "feed_url": "",
+      "instagram_handle": "burojogos"
     }
   ],
   "email": {
@@ -40,6 +52,8 @@
     "bgg_timeout_seconds": 10,
     "request_timeout_seconds": 15,
     "max_pre_sale_pages": 2,
-    "max_promo_pages": 3
+    "max_promo_pages": 3,
+    "news_days_window": 2,
+    "crowdfunding_days_window": 2
   }
 }

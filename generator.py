@@ -220,6 +220,58 @@ def extract_game_name(title: str, content: str = "") -> str:
     return cleaned.strip()
 
 
+def generate_news_summary(title: str, content: str) -> str:
+    """
+    Gera um resumo de até 100 palavras de uma notícia do LudoNews.
+    """
+    if not get_api_key():
+        return content[:300] if content else title
+
+    prompt = f"""
+    Você é um redator especialista em jogos de tabuleiro, estilo "The News" — direto, informativo e engajador.
+    Escreva um resumo da notícia abaixo em Português do Brasil.
+
+    Instruções estritas:
+    - LIMITE ABSOLUTO: no máximo 100 palavras. Um único parágrafo.
+    - Preserve os fatos principais: o que foi anunciado, qual jogo, qual editora.
+    - Não invente informações que não estejam no conteúdo fornecido.
+    - Não use clichês como "incrível", "imperdível", "revolucionário".
+
+    Título: "{title}"
+    Conteúdo: "{content}"
+    """
+
+    result = call_groq(prompt, response_json=False)
+    return result if result else (content[:300] if content else title)
+
+
+def generate_crowdfunding_summary(project_name: str, description: str,
+                                   platform: str, end_date: str) -> str:
+    """
+    Gera um resumo de até 100 palavras de um projeto de financiamento coletivo.
+    """
+    if not get_api_key():
+        return description[:300] if description else project_name
+
+    prompt = f"""
+    Você é um redator especialista em jogos de tabuleiro, estilo "The News" — direto e objetivo.
+    Um projeto de financiamento coletivo de jogo de tabuleiro foi lançado na plataforma {platform}.
+    Escreva um resumo em Português do Brasil explicando o que é o projeto e por que vale a pena apoiar.
+
+    Instruções estritas:
+    - LIMITE ABSOLUTO: no máximo 100 palavras. Um único parágrafo.
+    - Mencione a data de encerramento da campanha: {end_date}.
+    - Baseie-se apenas nas informações fornecidas. Não invente detalhes.
+    - Não use termos como "incrível", "imperdível", "revolucionário".
+
+    Nome do projeto: "{project_name}"
+    Descrição disponível: "{description}"
+    """
+
+    result = call_groq(prompt, response_json=False)
+    return result if result else (description[:300] if description else project_name)
+
+
 def generate_summary(game_name: str, contextual_info: str = "") -> str:
     """
     Gera um resumo atraente de gameplay de no máximo 2 parágrafos usando o Groq.
