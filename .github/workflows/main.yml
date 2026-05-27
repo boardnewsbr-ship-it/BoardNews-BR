@@ -4,10 +4,10 @@ on:
   schedule:
     # Roda todos os dias às 09:30 UTC (06:30 no Horário de Brasília UTC-3)
     - cron: '30 9 * * *'
-  workflow_dispatch: # Permite disparar a execução manualmente pela interface do GitHub
+  workflow_dispatch:
 
 permissions:
-  contents: write # Necessário para fazer commit e push do banco SQLite atualizado
+  contents: write
 
 jobs:
   run-newsletter:
@@ -25,6 +25,13 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
+      - name: Install Chrome
+        run: |
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update -q
+          sudo apt-get install -y google-chrome-stable
+
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
@@ -34,8 +41,6 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           BGG_API_TOKEN: ${{ secrets.BGG_API_TOKEN }}
-          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
-          INSTAGRAM_PASSWORD: ${{ secrets.INSTAGRAM_PASSWORD }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: python main.py
 
@@ -43,42 +48,31 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          
-          # Verifica se o arquivo sqlite foi criado ou modificado
+
           if [ -f newsletter.db ]; then
-            echo "Banco de dados SQLite encontrado. Iniciando processo de persistência robusta..."
-            
-            # 1. Garante que estamos na branch correta localmente e sincronizados
             git checkout ${{ github.ref_name }} || git checkout -b ${{ github.ref_name }} origin/${{ github.ref_name }}
-            
-            # 2. Adiciona o banco e faz o commit local
             git add newsletter.db
             if ! git diff --cached --quiet; then
               git commit -m "chore: atualiza banco de dados da newsletter [skip ci]"
-              
-              # 3. Loop resiliente com Pull Rebase (-X ours) e Push
+
               success=false
               for i in {1..5}; do
-                echo "Tentativa $i de sincronização e push..."
+                echo "Tentativa $i..."
                 git fetch origin ${{ github.ref_name }}
                 if git pull origin ${{ github.ref_name }} --rebase -X ours; then
                   if git push origin ${{ github.ref_name }}; then
-                    echo "Banco de dados SQLite atualizado e persistido com sucesso na branch ${{ github.ref_name }}!"
                     success=true
                     break
                   fi
                 fi
-                echo "Concorrência detectada ou falha na tentativa $i. Aguardando 5 segundos para tentar novamente..."
                 sleep 5
               done
-              
+
               if [ "$success" = false ]; then
-                echo "Erro: Não foi possível realizar o push após 5 tentativas devido a concorrência persistente."
+                echo "Erro: push falhou após 5 tentativas."
                 exit 1
               fi
             else
-              echo "Nenhuma alteração real foi detectada no banco de dados SQLite."
+              echo "Nenhuma alteração no banco de dados."
             fi
-          else
-            echo "Banco de dados SQLite não encontrado. Nada para persistir."
           fi

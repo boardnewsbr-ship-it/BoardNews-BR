@@ -247,10 +247,65 @@ def scrape_ludonews(days_window: int = 2) -> list:
 # FINANCIAMENTO COLETIVO — Catarse
 # ─────────────────────────────────────────────
 
+def _get_selenium_driver():
+    """
+    Cria um driver Chrome headless para contornar proteções Cloudflare WAF
+    que bloqueiam IPs de datacenter (GitHub Actions).
+    Retorna None se o Selenium/Chrome não estiver disponível.
+    """
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.chrome.service import Service
+
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1280,800')
+        options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                             'AppleWebKit/537.36 (KHTML, like Gecko) '
+                             'Chrome/120.0.0.0 Safari/537.36')
+        options.add_argument('--lang=pt-BR')
+
+        driver = webdriver.Chrome(options=options)
+        return driver
+    except Exception as e:
+        print(f"   -> Selenium indisponível: {e}")
+        return None
+
+
+def _selenium_get(url: str, wait_seconds: int = 4) -> str | None:
+    """
+    Abre uma URL com Chrome headless e retorna o HTML renderizado.
+    Fecha o driver após uso.
+    """
+    driver = _get_selenium_driver()
+    if driver is None:
+        return None
+    try:
+        driver.get(url)
+        time.sleep(wait_seconds)  # Aguarda JS renderizar
+        return driver.page_source
+    except Exception as e:
+        print(f"   -> Erro Selenium ao acessar {url}: {e}")
+        return None
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────
+# FINANCIAMENTO COLETIVO — Catarse
+# ─────────────────────────────────────────────
+
 def scrape_catarse(days_window: int = 2) -> list:
     """
     Coleta projetos de jogos de tabuleiro lançados recentemente no Catarse.
-    Usa proxy Cloudflare Workers para contornar bloqueio de IP de datacenter.
+    Usa Selenium (Chrome headless) para contornar o Cloudflare WAF.
     Retorna apenas projetos cujo início de campanha foi nos últimos `days_window` dias.
     """
     url = ("https://www.catarse.me/explore"
@@ -260,113 +315,80 @@ def scrape_catarse(days_window: int = 2) -> list:
     cutoff = datetime.now().date() - timedelta(days=days_window)
     projects = []
 
-    try:
-        response = _fetch_via_proxy(url, timeout=20)
-        if response is None or response.status_code != 200:
-            print(f"   -> Erro ao acessar Catarse (status={getattr(response, 'status_code', 'N/A')}).")
-            return []
+    html = _selenium_get(url, wait_seconds=5)
+    if not html:
+        print("   -> Selenium indisponível. Catarse ignorado.")
+        return []
 
-        soup = BeautifulSoup(response.content, 'html.parser')
+    soup = BeautifulSoup(html, 'html.parser')
 
-        # O Catarse é um SPA (React) — tenta encontrar dados pre-renderizados ou cards
-        cards = (
-            soup.select('div.card-project') or
-            soup.select('div[data-content="project-card"]') or
-            soup.select('article.project') or
-            soup.select('div.project-card') or
-            soup.select('div.w-col')
-        )
+    # Cards de projeto no Catarse
+    cards = (
+        soup.select('div.card-project') or
+        soup.select('div[class*="project-card"]') or
+        soup.select('div.w-col') or
+        soup.select('article')
+    )
 
-        if not cards:
-            # Fallback: busca links de projetos na página
-            all_links = soup.find_all('a', href=re.compile(r'/projects/|/catarse/'))
-            seen = set()
-            for a in all_links:
-                href = a.get('href', '')
-                text = a.get_text(strip=True)
-                if href not in seen and len(text) > 5:
-                    seen.add(href)
-                    if not href.startswith('http'):
-                        href = 'https://www.catarse.me' + href
-                    projects.append({
-                        'name': text,
-                        'link': href,
-                        'description': text,
-                        'image': '',
-                        'end_date': None,
-                        'start_date': None,
-                        'platform': 'catarse',
-                    })
-            print(f"   -> {len(projects)} projetos via fallback de links.")
-            return projects[:10]
+    if not cards:
+        print("   -> Nenhum card encontrado no Catarse após renderização JS.")
+        return []
 
-        print(f"   -> {len(cards)} cards encontrados.")
+    print(f"   -> {len(cards)} cards encontrados.")
 
-        for card in cards:
-            # Nome do projeto
-            name_tag = card.select_one('h2, h3, .project-name, .title, strong')
-            if not name_tag:
-                continue
-            name = name_tag.get_text(strip=True)
-            if not name:
-                continue
+    for card in cards:
+        name_tag = card.select_one('h2, h3, .project-name, .title, strong, a')
+        if not name_tag:
+            continue
+        name = name_tag.get_text(strip=True)
+        if not name or len(name) < 3:
+            continue
 
-            # Link
-            link_tag = card.find('a')
-            link = link_tag.get('href', '') if link_tag else ''
-            if link and not link.startswith('http'):
-                link = 'https://www.catarse.me' + link
+        link_tag = card.find('a')
+        link = link_tag.get('href', '') if link_tag else ''
+        if link and not link.startswith('http'):
+            link = 'https://www.catarse.me' + link
 
-            # Imagem
-            img_tag = card.find('img')
-            image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
+        img_tag = card.find('img')
+        image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
 
-            # Datas (início e fim)
-            start_date = None
-            end_date = None
-            date_tags = card.select('time, .date, .expires, .deadline, span')
-            for dt in date_tags:
-                dt_text = dt.get('datetime', '') or dt.get_text(strip=True)
-                parsed = _parse_br_date(dt_text)
-                if parsed:
-                    if parsed >= datetime.now().date():
-                        end_date = parsed
-                    else:
-                        start_date = parsed
+        # Datas
+        end_date = None
+        start_date = None
+        for dt in card.select('time, .date, .expires, .deadline, span'):
+            raw = dt.get('datetime', '') or dt.get_text(strip=True)
+            parsed = _parse_br_date(raw)
+            if parsed:
+                if parsed >= datetime.now().date():
+                    end_date = parsed
+                else:
+                    start_date = parsed
 
-            # Filtra: só projetos iniciados nos últimos days_window dias
-            if start_date and start_date < cutoff:
-                continue
+        if start_date and start_date < cutoff:
+            continue
 
-            # Descrição
-            desc_tag = card.select_one('p, .description, .excerpt')
-            description = desc_tag.get_text(strip=True) if desc_tag else name
+        desc_tag = card.select_one('p, .description, .excerpt')
+        description = desc_tag.get_text(strip=True) if desc_tag else name
 
-            # Verifica se é jogo de tabuleiro (filtro extra por texto)
-            combined = (name + ' ' + description).lower()
-            board_game_keywords = [
-                'tabuleiro', 'board game', 'jogo', 'cartas', 'rpg',
-                'dado', 'fichas', 'miniatura', 'estratégia', 'cooperativo',
-            ]
-            if not any(kw in combined for kw in board_game_keywords):
-                print(f"   -> Ignorado (não parece jogo de tabuleiro): '{name}'")
-                continue
+        # Filtra por jogo de tabuleiro
+        combined = (name + ' ' + description).lower()
+        keywords = ['tabuleiro', 'board game', 'jogo', 'cartas', 'rpg',
+                    'dado', 'fichas', 'miniatura', 'estratégia', 'cooperativo']
+        if not any(kw in combined for kw in keywords):
+            print(f"   -> Ignorado (não é jogo de tabuleiro): '{name}'")
+            continue
 
-            projects.append({
-                'name': name,
-                'link': link,
-                'description': description,
-                'image': image,
-                'end_date': end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
-                'start_date': start_date,
-                'platform': 'catarse',
-            })
+        projects.append({
+            'name': name,
+            'link': link,
+            'description': description,
+            'image': image,
+            'end_date': end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
+            'start_date': start_date,
+            'platform': 'catarse',
+        })
 
-        print(f"   -> {len(projects)} projeto(s) recentes no Catarse.")
-
-    except Exception as e:
-        print(f"   -> Erro ao raspar Catarse: {e}")
-
+    print(f"   -> {len(projects)} projeto(s) recentes no Catarse.")
     return projects
 
 
@@ -377,124 +399,100 @@ def scrape_catarse(days_window: int = 2) -> list:
 def scrape_meeplestarter(days_window: int = 2) -> list:
     """
     Coleta projetos EM ANDAMENTO do Meeple Starter lançados recentemente.
-    Usa proxy Cloudflare Workers para contornar bloqueio 403 de datacenter.
-    Ignora projetos finalizados e os que ainda não iniciaram.
-    Retorna apenas os que iniciaram nos últimos `days_window` dias.
+    Usa Selenium (Chrome headless) para contornar o bloqueio 403 do Cloudflare.
     """
-    url = "https://meeplestarter.com.br/projetos"
+    url = "https://www.meeplestarter.com.br/projetos"
     print(f"Coletando projetos Meeple Starter ({url})...")
 
     cutoff = datetime.now().date() - timedelta(days=days_window)
     today = datetime.now().date()
     projects = []
 
-    try:
-        response = _fetch_via_proxy(url, timeout=20)
-        if response is None or response.status_code != 200:
-            print(f"   -> Erro ao acessar Meeple Starter (status={getattr(response, 'status_code', 'N/A')}).")
-            return []
+    html = _selenium_get(url, wait_seconds=4)
+    if not html:
+        print("   -> Selenium indisponível. Meeple Starter ignorado.")
+        return []
 
-        soup = BeautifulSoup(response.content, 'html.parser')
+    soup = BeautifulSoup(html, 'html.parser')
 
-        # Meeple Starter usa cards de projeto
-        cards = (
-            soup.select('div.project-card') or
-            soup.select('div.card') or
-            soup.select('article') or
-            soup.select('div.projeto') or
-            soup.select('div[class*="project"]')
-        )
+    cards = (
+        soup.select('div.project-card') or
+        soup.select('div[class*="card"]') or
+        soup.select('article') or
+        soup.select('div[class*="project"]')
+    )
 
-        if not cards:
-            all_links = soup.find_all('a', href=re.compile(r'/projeto/|/p/'))
-            seen = set()
-            for a in all_links:
-                href = a.get('href', '')
-                text = a.get_text(strip=True)
-                if href not in seen and len(text) > 5:
-                    seen.add(href)
-                    if not href.startswith('http'):
-                        href = 'https://meeplestarter.com.br' + href
-                    projects.append({
-                        'name': text,
-                        'link': href,
-                        'description': text,
-                        'image': '',
-                        'end_date': None,
-                        'platform': 'meeplestarter',
-                    })
-            print(f"   -> {len(projects)} projetos via fallback de links.")
-            return projects[:10]
+    # Remove o card genérico "Conheça todos os nossos projetos"
+    cards = [c for c in cards
+             if 'conheça todos' not in c.get_text(strip=True).lower()]
 
-        print(f"   -> {len(cards)} cards encontrados.")
+    if not cards:
+        print("   -> Nenhum card de projeto encontrado no Meeple Starter.")
+        return []
 
-        for card in cards:
-            # Nome
-            name_tag = card.select_one('h2, h3, h4, .project-title, .title, strong, a')
-            if not name_tag:
-                continue
-            name = name_tag.get_text(strip=True)
-            if not name:
-                continue
+    print(f"   -> {len(cards)} cards encontrados.")
 
-            # Link
-            link_tag = card.find('a')
-            link = link_tag.get('href', '') if link_tag else ''
-            if link and not link.startswith('http'):
-                link = 'https://meeplestarter.com.br' + link
+    for card in cards:
+        name_tag = card.select_one('h2, h3, h4, .project-title, .title, strong')
+        if not name_tag:
+            name_tag = card.find('a')
+        if not name_tag:
+            continue
+        name = name_tag.get_text(strip=True)
+        if not name or len(name) < 3:
+            continue
 
-            # Imagem
-            img_tag = card.find('img')
-            image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
+        link_tag = card.find('a')
+        link = link_tag.get('href', '') if link_tag else ''
+        if link and not link.startswith('http'):
+            link = 'https://www.meeplestarter.com.br' + link
 
-            # Status: detecta se está finalizado ou não iniciado
-            card_text = card.get_text(' ', strip=True).lower()
-            if any(w in card_text for w in ['finalizado', 'encerrado', 'concluído']):
-                print(f"   -> Ignorado (finalizado): '{name}'")
-                continue
-            if any(w in card_text for w in ['em breve', 'aguardando', 'não iniciado']):
-                print(f"   -> Ignorado (ainda não iniciou): '{name}'")
-                continue
+        img_tag = card.find('img')
+        image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
 
-            # Datas
-            start_date = None
-            end_date = None
-            all_dates = []
-            date_tags = card.select('time, .date, .prazo, .deadline, span, p')
-            for dt in date_tags:
-                raw = dt.get('datetime', '') or dt.get_text(strip=True)
-                parsed = _parse_br_date(raw)
-                if parsed:
-                    all_dates.append(parsed)
+        card_text = card.get_text(' ', strip=True).lower()
 
-            if all_dates:
-                future_dates = [d for d in all_dates if d >= today]
-                past_dates = [d for d in all_dates if d < today]
-                end_date = min(future_dates) if future_dates else None
-                start_date = max(past_dates) if past_dates else None
+        # Ignora finalizados e não iniciados
+        if any(w in card_text for w in ['finalizado', 'encerrado', 'concluído']):
+            print(f"   -> Ignorado (finalizado): '{name}'")
+            continue
+        if any(w in card_text for w in ['em breve', 'aguardando', 'não iniciado']):
+            print(f"   -> Ignorado (não iniciado): '{name}'")
+            continue
 
-            # Filtra: só projetos que iniciaram nos últimos days_window dias
-            if start_date and start_date < cutoff:
-                print(f"   -> Ignorado (início há mais de {days_window} dias): '{name}'")
-                continue
+        # Datas
+        end_date = None
+        start_date = None
+        all_dates = []
+        for dt in card.select('time, .date, .prazo, .deadline, span, p'):
+            raw = dt.get('datetime', '') or dt.get_text(strip=True)
+            parsed = _parse_br_date(raw)
+            if parsed:
+                all_dates.append(parsed)
 
-            desc_tag = card.select_one('p, .description, .resumo')
-            description = desc_tag.get_text(strip=True) if desc_tag else name
+        if all_dates:
+            future = [d for d in all_dates if d >= today]
+            past = [d for d in all_dates if d < today]
+            end_date = min(future) if future else None
+            start_date = max(past) if past else None
 
-            projects.append({
-                'name': name,
-                'link': link,
-                'description': description,
-                'image': image,
-                'end_date': end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
-                'platform': 'meeplestarter',
-            })
+        if start_date and start_date < cutoff:
+            print(f"   -> Ignorado (início antigo): '{name}'")
+            continue
 
-        print(f"   -> {len(projects)} projeto(s) ativos recentes no Meeple Starter.")
+        desc_tag = card.select_one('p, .description, .resumo')
+        description = desc_tag.get_text(strip=True) if desc_tag else name
 
-    except Exception as e:
-        print(f"   -> Erro ao raspar Meeple Starter: {e}")
+        projects.append({
+            'name': name,
+            'link': link,
+            'description': description,
+            'image': image,
+            'end_date': end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
+            'platform': 'meeplestarter',
+        })
 
+    print(f"   -> {len(projects)} projeto(s) ativos recentes no Meeple Starter.")
     return projects
 
 
