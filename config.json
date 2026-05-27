@@ -54,6 +54,7 @@
     "max_pre_sale_pages": 2,
     "max_promo_pages": 3,
     "news_days_window": 2,
-    "crowdfunding_days_window": 2
+    "crowdfunding_days_window": 2,
+    "proxy_url": "https://noticias.boardnewsbr.workers.dev"
   }
 }

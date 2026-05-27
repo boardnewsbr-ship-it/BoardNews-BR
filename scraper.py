@@ -15,6 +15,10 @@ HEADERS = {
                   '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
+# URL do proxy Cloudflare Workers — configurada via variável de ambiente ou config.json
+# O proxy contorna bloqueios de IP de datacenter em sites como Catarse e Meeple Starter.
+_PROXY_URL = None
+
 
 def load_settings() -> dict:
     """Carrega as configurações do config.json (fallback para valores padrão)."""
@@ -25,6 +29,58 @@ def load_settings() -> dict:
     except Exception:
         pass
     return {}
+
+
+def _get_proxy_url() -> str:
+    """
+    Retorna a URL base do proxy Cloudflare Workers.
+    Prioridade: variável de ambiente PROXY_URL > config.json > vazio (sem proxy).
+    """
+    global _PROXY_URL
+    if _PROXY_URL is not None:
+        return _PROXY_URL
+
+    # 1. Variável de ambiente (GitHub Secret)
+    _PROXY_URL = os.environ.get("PROXY_URL", "").strip().rstrip('/')
+
+    # 2. Fallback: config.json
+    if not _PROXY_URL:
+        settings = load_settings()
+        _PROXY_URL = settings.get("proxy_url", "").strip().rstrip('/')
+
+    if _PROXY_URL:
+        print(f"   -> Proxy configurado: {_PROXY_URL}")
+    else:
+        print("   -> AVISO: PROXY_URL não configurada. Tentando acesso direto (pode falhar em datacenter).")
+
+    return _PROXY_URL
+
+
+def _fetch_via_proxy(url: str, timeout: int = 15) -> requests.Response | None:
+    """
+    Faz uma requisição HTTP passando pela URL do proxy Cloudflare Workers.
+    O proxy adiciona ?url=<target> e repassa a resposta com IP residencial.
+    Retorna None em caso de falha.
+    """
+    proxy_base = _get_proxy_url()
+
+    if proxy_base:
+        proxy_url = f"{proxy_base}?url={requests.utils.quote(url, safe='')}"
+        try:
+            resp = requests.get(proxy_url, headers=HEADERS, timeout=timeout)
+            if resp.status_code == 200:
+                return resp
+            print(f"   -> Proxy retornou {resp.status_code} para {url[:60]}")
+        except Exception as e:
+            print(f"   -> Falha no proxy: {e}")
+
+    # Fallback: acesso direto
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=timeout)
+        return resp
+    except Exception as e:
+        print(f"   -> Falha no acesso direto: {e}")
+        return None
 
 
 def clean_price(price_str: str) -> float:
@@ -194,7 +250,7 @@ def scrape_ludonews(days_window: int = 2) -> list:
 def scrape_catarse(days_window: int = 2) -> list:
     """
     Coleta projetos de jogos de tabuleiro lançados recentemente no Catarse.
-    URL: categoria 14 (Jogos), filtro recent, mode não-assinatura.
+    Usa proxy Cloudflare Workers para contornar bloqueio de IP de datacenter.
     Retorna apenas projetos cujo início de campanha foi nos últimos `days_window` dias.
     """
     url = ("https://www.catarse.me/explore"
@@ -205,9 +261,9 @@ def scrape_catarse(days_window: int = 2) -> list:
     projects = []
 
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
-        if response.status_code != 200:
-            print(f"   -> Erro HTTP {response.status_code} ao acessar Catarse.")
+        response = _fetch_via_proxy(url, timeout=20)
+        if response is None or response.status_code != 200:
+            print(f"   -> Erro ao acessar Catarse (status={getattr(response, 'status_code', 'N/A')}).")
             return []
 
         soup = BeautifulSoup(response.content, 'html.parser')
@@ -321,8 +377,8 @@ def scrape_catarse(days_window: int = 2) -> list:
 def scrape_meeplestarter(days_window: int = 2) -> list:
     """
     Coleta projetos EM ANDAMENTO do Meeple Starter lançados recentemente.
-    Ignora projetos finalizados (percentual = 100% e prazo encerrado) e
-    projetos que ainda não iniciaram (percentual = 0% sem data de início passada).
+    Usa proxy Cloudflare Workers para contornar bloqueio 403 de datacenter.
+    Ignora projetos finalizados e os que ainda não iniciaram.
     Retorna apenas os que iniciaram nos últimos `days_window` dias.
     """
     url = "https://meeplestarter.com.br/projetos"
@@ -333,9 +389,9 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
     projects = []
 
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
-        if response.status_code != 200:
-            print(f"   -> Erro HTTP {response.status_code} ao acessar Meeple Starter.")
+        response = _fetch_via_proxy(url, timeout=20)
+        if response is None or response.status_code != 200:
+            print(f"   -> Erro ao acessar Meeple Starter (status={getattr(response, 'status_code', 'N/A')}).")
             return []
 
         soup = BeautifulSoup(response.content, 'html.parser')
