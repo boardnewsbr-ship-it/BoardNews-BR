@@ -276,9 +276,10 @@ def _get_selenium_driver():
         return None
 
 
-def _selenium_get(url: str, wait_seconds: int = 4) -> str | None:
+def _selenium_get(url: str, wait_seconds: int = 4, wait_for_selector: str = None) -> str | None:
     """
     Abre uma URL com Chrome headless e retorna o HTML renderizado.
+    Se wait_for_selector for fornecido, aguarda o elemento aparecer antes de retornar.
     Fecha o driver após uso.
     """
     driver = _get_selenium_driver()
@@ -286,7 +287,18 @@ def _selenium_get(url: str, wait_seconds: int = 4) -> str | None:
         return None
     try:
         driver.get(url)
-        time.sleep(wait_seconds)  # Aguarda JS renderizar
+        if wait_for_selector:
+            try:
+                from selenium.webdriver.support.ui import WebDriverWait
+                from selenium.webdriver.support import expected_conditions as EC
+                from selenium.webdriver.common.by import By
+                WebDriverWait(driver, wait_seconds).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, wait_for_selector))
+                )
+            except Exception:
+                time.sleep(wait_seconds)  # fallback se o elemento não aparecer
+        else:
+            time.sleep(wait_seconds)
         return driver.page_source
     except Exception as e:
         print(f"   -> Erro Selenium ao acessar {url}: {e}")
@@ -305,8 +317,9 @@ def _selenium_get(url: str, wait_seconds: int = 4) -> str | None:
 def scrape_catarse(days_window: int = 2) -> list:
     """
     Coleta projetos de jogos de tabuleiro lançados recentemente no Catarse.
-    Usa Selenium (Chrome headless) para contornar o Cloudflare WAF.
-    Retorna apenas projetos cujo início de campanha foi nos últimos `days_window` dias.
+    Usa Selenium com espera explícita pelo elemento 'a[href*="/projects/"]'.
+    Extrai projetos pelos links internos — mais robusto que seletores de card
+    que variam com o layout do SPA React.
     """
     url = ("https://www.catarse.me/explore"
            "?ref=home_projects_we_love&mode=not_sub&category_id=14&filter=recent")
@@ -315,94 +328,81 @@ def scrape_catarse(days_window: int = 2) -> list:
     cutoff = datetime.now().date() - timedelta(days=days_window)
     projects = []
 
-    html = _selenium_get(url, wait_seconds=5)
+    # Aguarda aparecer pelo menos um link de projeto
+    html = _selenium_get(url, wait_seconds=8, wait_for_selector='a[href*="/projects/"]')
     if not html:
         print("   -> Selenium indisponível. Catarse ignorado.")
         return []
 
     soup = BeautifulSoup(html, 'html.parser')
 
-    # Cards de projeto no Catarse
-    cards = (
-        soup.select('div.card-project') or
-        soup.select('div[class*="project-card"]') or
-        soup.select('div.w-col') or
-        soup.select('article')
-    )
-
-    if not cards:
-        print("   -> Nenhum card encontrado no Catarse após renderização JS.")
-        # Debug: imprime primeiras 3000 chars do HTML para diagnóstico de seletores
-        debug_soup = BeautifulSoup(html, 'html.parser')
-        print("   -> DEBUG HTML (primeiros elementos com classe):")
-        for tag in debug_soup.find_all(True, class_=True)[:30]:
-            classes = ' '.join(tag.get('class', []))[:80]
-            text = tag.get_text(' ', strip=True)[:60]
-            print(f"      <{tag.name} class=\"{classes}\"> {text}")
-        return []
-
-    print(f"   -> {len(cards)} cards encontrados.")
-
-    for card in cards:
-        name_tag = card.select_one('h2, h3, .project-name, .title, strong, a')
-        if not name_tag:
-            print(f"      -> Card sem name_tag, pulando")
+    # Estratégia: coleta todos os links de projetos e reconstrói os dados
+    # O Catarse usa /projects/<slug> como padrão de URL
+    seen_links = set()
+    project_links = []
+    for a in soup.find_all('a', href=re.compile(r'/projects/')):
+        href = a.get('href', '')
+        if not href.startswith('http'):
+            href = 'https://www.catarse.me' + href
+        if href in seen_links:
             continue
-        name = name_tag.get_text(strip=True)
+        seen_links.add(href)
+
+        # O container do card é o ancestral mais próximo com imagem e título
+        container = a
+        for _ in range(5):  # sobe até 5 níveis
+            parent = container.parent
+            if parent is None:
+                break
+            if parent.find('img') and parent.find('h2, h3, h4, p'):
+                container = parent
+                break
+            container = parent
+
+        name_tag = container.find(['h2', 'h3', 'h4', 'p'])
+        name = name_tag.get_text(strip=True) if name_tag else a.get_text(strip=True)
         if not name or len(name) < 3:
-            print(f"      -> Card com nome vazio/curto: '{name}'")
             continue
 
-        link_tag = card.find('a')
-        link = link_tag.get('href', '') if link_tag else ''
-        if link and not link.startswith('http'):
-            link = 'https://www.catarse.me' + link
-
-        img_tag = card.find('img')
+        img_tag = container.find('img')
         image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
 
-        # Datas
-        end_date = None
-        start_date = None
-        for dt in card.select('time, .date, .expires, .deadline, span'):
-            raw = dt.get('datetime', '') or dt.get_text(strip=True)
-            parsed = _parse_br_date(raw)
-            if parsed:
-                if parsed >= datetime.now().date():
-                    end_date = parsed
-                else:
-                    start_date = parsed
-
-        print(f"      -> Card: '{name}' | start={start_date} | cutoff={cutoff}")
-
-        if start_date and start_date < cutoff:
-            print(f"      -> Ignorado por data de início antiga")
-            continue
-
-        desc_tag = card.select_one('p, .description, .excerpt')
+        desc_tag = container.find('p')
         description = desc_tag.get_text(strip=True) if desc_tag else name
 
         # Filtra por jogo de tabuleiro
         combined = (name + ' ' + description).lower()
         keywords = ['tabuleiro', 'board game', 'jogo', 'cartas', 'rpg',
-                    'dado', 'fichas', 'miniatura', 'estratégia', 'cooperativo']
-        matched = [kw for kw in keywords if kw in combined]
-        print(f"      -> Keywords encontradas: {matched}")
-        if not matched:
-            print(f"      -> Ignorado (não é jogo de tabuleiro): '{name}'")
+                    'dado', 'fichas', 'miniatura', 'estratégia', 'cooperativo',
+                    'dados', 'card game', 'tcg', 'lcg']
+        if not any(kw in combined for kw in keywords):
+            print(f"   -> Ignorado (não é jogo de tabuleiro): '{name}'")
             continue
 
-        projects.append({
+        # Data de encerramento — busca no container
+        end_date = None
+        for tag in container.find_all(['span', 'p', 'div', 'time']):
+            raw = tag.get('datetime', '') or tag.get_text(strip=True)
+            parsed = _parse_br_date(raw)
+            if parsed and parsed >= datetime.now().date():
+                end_date = parsed
+                break
+
+        print(f"   -> Projeto encontrado: '{name}'")
+        project_links.append({
             'name': name,
-            'link': link,
+            'link': href,
             'description': description,
             'image': image,
             'end_date': end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
-            'start_date': start_date,
             'platform': 'catarse',
         })
 
-    print(f"   -> {len(projects)} projeto(s) recentes no Catarse.")
+    # Como não conseguimos a data de início via HTML do SPA,
+    # incluímos todos os projetos encontrados (a deduplicação do banco
+    # garante que cada projeto apareça apenas uma vez no e-mail)
+    projects = project_links
+    print(f"   -> {len(projects)} projeto(s) encontrados no Catarse.")
     return projects
 
 
@@ -413,7 +413,8 @@ def scrape_catarse(days_window: int = 2) -> list:
 def scrape_meeplestarter(days_window: int = 2) -> list:
     """
     Coleta projetos EM ANDAMENTO do Meeple Starter lançados recentemente.
-    Usa Selenium (Chrome headless) para contornar o bloqueio 403 do Cloudflare.
+    Aguarda o div.loading desaparecer antes de ler o HTML — o site carrega
+    os projetos via JS assíncrono e o loading fica visível durante esse processo.
     """
     url = "https://www.meeplestarter.com.br/projetos"
     print(f"Coletando projetos Meeple Starter ({url})...")
@@ -422,97 +423,114 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
     today = datetime.now().date()
     projects = []
 
-    html = _selenium_get(url, wait_seconds=4)
-    if not html:
+    driver = _get_selenium_driver()
+    if driver is None:
         print("   -> Selenium indisponível. Meeple Starter ignorado.")
         return []
 
+    try:
+        driver.get(url)
+
+        # Aguarda o div.loading desaparecer (indica que os projetos foram renderizados)
+        try:
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            from selenium.webdriver.common.by import By
+            WebDriverWait(driver, 15).until(
+                EC.invisibility_of_element_located((By.CSS_SELECTOR, 'div.loading'))
+            )
+            print("   -> Loading concluído, lendo projetos...")
+        except Exception:
+            print("   -> Timeout aguardando loading, tentando mesmo assim...")
+            time.sleep(6)
+
+        html = driver.page_source
+    except Exception as e:
+        print(f"   -> Erro Selenium: {e}")
+        return []
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
     soup = BeautifulSoup(html, 'html.parser')
 
-    cards = (
-        soup.select('div.project-card') or
-        soup.select('div[class*="card"]') or
-        soup.select('article') or
-        soup.select('div[class*="project"]')
-    )
-
-    # Remove o card genérico "Conheça todos os nossos projetos"
-    cards = [c for c in cards
-             if 'conheça todos' not in c.get_text(strip=True).lower()]
-
-    if not cards:
-        print("   -> Nenhum card de projeto encontrado no Meeple Starter.")
-        # Debug: imprime elementos com classe para diagnóstico
-        debug_soup = BeautifulSoup(html, 'html.parser')
-        print("   -> DEBUG HTML (primeiros elementos com classe):")
-        for tag in debug_soup.find_all(True, class_=True)[:30]:
-            classes = ' '.join(tag.get('class', []))[:80]
-            text = tag.get_text(' ', strip=True)[:60]
-            print(f"      <{tag.name} class=\"{classes}\"> {text}")
-        return []
-
-    print(f"   -> {len(cards)} cards encontrados.")
-
-    for card in cards:
-        name_tag = card.select_one('h2, h3, h4, .project-title, .title, strong')
-        if not name_tag:
-            name_tag = card.find('a')
-        if not name_tag:
+    # Busca projetos pelos links /projeto/ — mais robusto que seletores de classe
+    seen = set()
+    raw_projects = []
+    for a in soup.find_all('a', href=re.compile(r'/projeto/')):
+        href = a.get('href', '')
+        if not href.startswith('http'):
+            href = 'https://www.meeplestarter.com.br' + href
+        if href in seen:
             continue
-        name = name_tag.get_text(strip=True)
+        seen.add(href)
+
+        # Sobe até encontrar o container do card (que tem imagem + título + preço)
+        container = a
+        for _ in range(6):
+            parent = container.parent
+            if parent is None:
+                break
+            if parent.find('img') and parent.find(string=re.compile(r'R\$')):
+                container = parent
+                break
+            container = parent
+
+        # Nome do projeto
+        name_tag = container.find(['h1', 'h2', 'h3', 'h4', 'strong'])
+        name = name_tag.get_text(strip=True) if name_tag else a.get_text(strip=True)
         if not name or len(name) < 3:
             continue
 
-        link_tag = card.find('a')
-        link = link_tag.get('href', '') if link_tag else ''
-        if link and not link.startswith('http'):
-            link = 'https://www.meeplestarter.com.br' + link
-
-        img_tag = card.find('img')
-        image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
-
-        card_text = card.get_text(' ', strip=True).lower()
+        card_text = container.get_text(' ', strip=True).lower()
 
         # Ignora finalizados e não iniciados
         if any(w in card_text for w in ['finalizado', 'encerrado', 'concluído']):
             print(f"   -> Ignorado (finalizado): '{name}'")
             continue
-        if any(w in card_text for w in ['em breve', 'aguardando', 'não iniciado']):
+        if any(w in card_text for w in ['em breve', 'aguardando']):
             print(f"   -> Ignorado (não iniciado): '{name}'")
             continue
+
+        img_tag = container.find('img')
+        image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
 
         # Datas
         end_date = None
         start_date = None
         all_dates = []
-        for dt in card.select('time, .date, .prazo, .deadline, span, p'):
-            raw = dt.get('datetime', '') or dt.get_text(strip=True)
+        for tag in container.find_all(['span', 'p', 'div', 'time']):
+            raw = tag.get('datetime', '') or tag.get_text(strip=True)
             parsed = _parse_br_date(raw)
             if parsed:
                 all_dates.append(parsed)
 
         if all_dates:
             future = [d for d in all_dates if d >= today]
-            past = [d for d in all_dates if d < today]
-            end_date = min(future) if future else None
-            start_date = max(past) if past else None
+            past   = [d for d in all_dates if d < today]
+            end_date   = min(future) if future else None
+            start_date = max(past)   if past   else None
 
         if start_date and start_date < cutoff:
             print(f"   -> Ignorado (início antigo): '{name}'")
             continue
 
-        desc_tag = card.select_one('p, .description, .resumo')
+        desc_tag = container.find('p')
         description = desc_tag.get_text(strip=True) if desc_tag else name
 
-        projects.append({
-            'name': name,
-            'link': link,
+        print(f"   -> Projeto encontrado: '{name}'")
+        raw_projects.append({
+            'name':        name,
+            'link':        href,
             'description': description,
-            'image': image,
-            'end_date': end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
-            'platform': 'meeplestarter',
+            'image':       image,
+            'end_date':    end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
+            'platform':    'meeplestarter',
         })
 
+    projects = raw_projects
     print(f"   -> {len(projects)} projeto(s) ativos recentes no Meeple Starter.")
     return projects
 
@@ -523,101 +541,99 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
 
 def _parse_playeasy_products(html: str, mode: str) -> list:
     """
-    Extrai produtos do HTML da PlayEasy (já renderizado pelo Selenium).
+    Extrai produtos do HTML da PlayEasy renderizado pelo Selenium.
+    O site usa Tailwind CSS puro — não há classes semânticas como 'product-item'.
+    Estratégia: localiza links de produto e sobe na árvore até o container do card.
     mode: 'pre-sale' ou 'promotion'
-    Tenta múltiplos seletores para ser resiliente a mudanças de layout.
     """
     soup = BeautifulSoup(html, 'html.parser')
     results = []
+    seen = set()
 
-    # Tenta seletores em ordem de prioridade
-    products = (
-        soup.select('ul.products-grid li.item') or
-        soup.select('li.item') or
-        soup.select('div.product-item') or
-        soup.select('div[class*="product-item"]') or
-        soup.select('div.item') or
-        soup.select('article.product')
-    )
+    # Busca todos os links que apontam para páginas de produto individuais
+    product_links = [
+        a for a in soup.find_all('a', href=True)
+        if 'playeasy.com.br' in a.get('href', '')
+        and re.search(r'/[^/]+-\d+\.html$|/[^/]+/[^/]+\.html$', a.get('href', ''))
+    ]
 
-    if not products:
-        print(f"   -> Nenhum produto encontrado com os seletores conhecidos.")
-        # Debug: mostra primeiras tags com classe para diagnóstico
-        for tag in soup.find_all(['li', 'div', 'article'], class_=True)[:5]:
-            print(f"      <{tag.name} class=\"{' '.join(tag.get('class',[]))[:60]}\">")
+    # Fallback mais amplo
+    if not product_links:
+        product_links = [
+            a for a in soup.find_all('a', href=True)
+            if 'playeasy.com.br' in a.get('href', '')
+            and a.get('href', '').endswith('.html')
+            and len(a.get_text(strip=True)) > 4
+        ]
+
+    if not product_links:
+        print(f"   -> Nenhum link de produto encontrado.")
         return []
 
-    print(f"   -> {len(products)} produto(s) encontrados.")
-
-    for product in products:
-        # Nome e link
-        name_tag = (
-            product.select_one('h2.product-name a') or
-            product.select_one('h2 a') or
-            product.select_one('h3 a') or
-            product.select_one('a.product-name') or
-            product.select_one('.product-name a') or
-            product.select_one('a[title]')
-        )
-        if not name_tag:
+    for a in product_links:
+        href = a.get('href', '').strip()
+        if not href or href in seen:
             continue
+
+        # Ignora links de navegação
+        skip = ['promocoes', 'pre-venda', 'vitrine', 'categoria',
+                'busca', 'login', 'conta', 'carrinho', 'checkout',
+                'institutional', 'contato', 'sobre']
+        if any(p in href.lower() for p in skip):
+            continue
+        seen.add(href)
+
+        # Sobe na árvore até encontrar o container com imagem + preço
+        container = a
+        for _ in range(8):
+            parent = container.parent
+            if parent is None or parent.name in ['body', 'html']:
+                break
+            if parent.find('img') and re.search(r'R\$', parent.get_text()):
+                container = parent
+                break
+            container = parent
+
+        # Nome
+        name_tag = container.find(['h2', 'h3', 'h4']) or a
         name = name_tag.get('title', name_tag.get_text(strip=True)).strip()
-        link = name_tag.get('href', '').strip()
+        if not name or len(name) < 4:
+            continue
 
         # Imagem
-        img_tag = (
-            product.select_one('a.product-image img') or
-            product.select_one('img.product-image') or
-            product.select_one('img')
-        )
+        img_tag = container.find('img')
         img_url = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
 
+        # Todos os preços no container
+        price_texts = re.findall(r'R\$\s*[\d.,]+', container.get_text())
+        prices = sorted(set(clean_price(p) for p in price_texts if clean_price(p) > 0))
+
         if mode == 'pre-sale':
-            price = 0.0
-            price_tag = (
-                product.select_one('.regular-price .price') or
-                product.select_one('.special-price .price') or
-                product.select_one('.price-box .price') or
-                product.select_one('[class*="price"]')
-            )
-            if price_tag:
-                price = clean_price(price_tag.get_text())
+            price = prices[0] if prices else 0.0
             results.append({
-                'name': name, 'link': link,
+                'name': name, 'link': href,
                 'price': price, 'image': img_url,
                 'type': 'pre-sale',
             })
 
         elif mode == 'promotion':
-            price_from = 0.0
-            price_to = 0.0
-            old_tag = product.select_one('.old-price .price')
-            special_tag = product.select_one('.special-price .price')
-
-            if old_tag and special_tag:
-                price_from = clean_price(old_tag.get_text())
-                price_to = clean_price(special_tag.get_text())
-            else:
-                price_tag = (
-                    product.select_one('.regular-price .price') or
-                    product.select_one('.price-box .price')
-                )
-                if price_tag:
-                    price_to = clean_price(price_tag.get_text())
-                    price_from = price_to
-
-            # Só inclui se tiver desconto real
-            if price_from <= 0 or price_to <= 0 or price_from <= price_to:
+            if len(prices) < 2:
                 continue
-
+            price_from = max(prices)
+            price_to   = min(prices)
+            if price_from <= price_to:
+                continue
             discount = int(round((1 - price_to / price_from) * 100))
+            if discount < 5:
+                continue
             results.append({
-                'name': name, 'link': link,
+                'name': name, 'link': href,
                 'price_from': price_from, 'price_to': price_to,
                 'discount': discount, 'image': img_url,
                 'type': 'promotion',
             })
 
+    print(f"   -> {len(results)} produto(s) extraídos.")
     return results
 
 
@@ -633,7 +649,7 @@ def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
         url = f"{base_url}?p={page}" if page > 1 else base_url
         print(f"Raspando pré-vendas: {url}")
 
-        html = _selenium_get(url, wait_seconds=4)
+        html = _selenium_get(url, wait_seconds=6, wait_for_selector='a[href*="playeasy"]')
         if not html:
             print("   -> Selenium indisponível. Pré-vendas ignoradas.")
             break
@@ -662,7 +678,7 @@ def scrape_playeasy_promotions(max_pages: int = 3) -> list:
         url = f"{base_url}?p={page}" if page > 1 else base_url
         print(f"Raspando promoções: {url}")
 
-        html = _selenium_get(url, wait_seconds=4)
+        html = _selenium_get(url, wait_seconds=6, wait_for_selector='a[href*="playeasy"]')
         if not html:
             print("   -> Selenium indisponível. Promoções ignoradas.")
             break
