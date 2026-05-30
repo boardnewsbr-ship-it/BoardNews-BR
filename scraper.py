@@ -336,6 +336,14 @@ def scrape_catarse(days_window: int = 2) -> list:
 
     soup = BeautifulSoup(html, 'html.parser')
 
+    # Debug: mostra todos os links encontrados
+    all_links = soup.find_all('a', href=True)
+    print(f"   -> Total de links na página: {len(all_links)}")
+    project_links_found = [a for a in all_links if '/projects/' in a.get('href','')]
+    print(f"   -> Links com /projects/: {len(project_links_found)}")
+    for a in all_links[:20]:
+        print(f"      href={a.get('href','')[:80]} | texto={a.get_text(strip=True)[:30]}")
+
     # Estratégia: coleta todos os links de projetos e reconstrói os dados
     # O Catarse usa /projects/<slug> como padrão de URL
     seen_links = set()
@@ -456,6 +464,14 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
 
     soup = BeautifulSoup(html, 'html.parser')
 
+    # Debug: mostra todos os links encontrados
+    all_links = soup.find_all('a', href=True)
+    print(f"   -> Total de links na página: {len(all_links)}")
+    projeto_links = [a for a in all_links if '/projeto' in a.get('href','')]
+    print(f"   -> Links com /projeto: {len(projeto_links)}")
+    for a in all_links[:25]:
+        print(f"      href={a.get('href','')[:80]} | texto={a.get_text(strip=True)[:30]}")
+
     # Busca projetos pelos links /projeto/ — mais robusto que seletores de classe
     seen = set()
     raw_projects = []
@@ -568,6 +584,11 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
 
     if not product_links:
         print(f"   -> Nenhum link de produto encontrado.")
+        # Debug: mostra todos os links encontrados na página
+        all_links = soup.find_all('a', href=True)
+        print(f"   -> Total de links na página: {len(all_links)}")
+        for a in all_links[:20]:
+            print(f"      href={a.get('href','')[:80]} | texto={a.get_text(strip=True)[:40]}")
         return []
 
     for a in product_links:
