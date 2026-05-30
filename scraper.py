@@ -317,9 +317,8 @@ def _selenium_get(url: str, wait_seconds: int = 4, wait_for_selector: str = None
 def scrape_catarse(days_window: int = 2) -> list:
     """
     Coleta projetos de jogos de tabuleiro lançados recentemente no Catarse.
-    Usa Selenium com espera explícita pelo elemento 'a[href*="/projects/"]'.
-    Extrai projetos pelos links internos — mais robusto que seletores de card
-    que variam com o layout do SPA React.
+    Usa Selenium com espera explícita pelo seletor 'a[href*="ctrse_explore"]'.
+    Extrai projetos pelos links com ref=ctrse_explore — padrão real do Catarse.
     """
     url = ("https://www.catarse.me/explore"
            "?ref=home_projects_we_love&mode=not_sub&category_id=14&filter=recent")
@@ -328,8 +327,8 @@ def scrape_catarse(days_window: int = 2) -> list:
     cutoff = datetime.now().date() - timedelta(days=days_window)
     projects = []
 
-    # Aguarda aparecer pelo menos um link de projeto
-    html = _selenium_get(url, wait_seconds=8, wait_for_selector='a[href*="/projects/"]')
+    # Aguarda aparecer pelo menos um link de projeto (padrão ref=ctrse_explore)
+    html = _selenium_get(url, wait_seconds=8, wait_for_selector='a[href*="ctrse_explore"]')
     if not html:
         print("   -> Selenium indisponível. Catarse ignorado.")
         return []
@@ -339,16 +338,12 @@ def scrape_catarse(days_window: int = 2) -> list:
     # Debug: mostra todos os links encontrados
     all_links = soup.find_all('a', href=True)
     print(f"   -> Total de links na página: {len(all_links)}")
-    project_links_found = [a for a in all_links if '/projects/' in a.get('href','')]
-    print(f"   -> Links com /projects/: {len(project_links_found)}")
-    for a in all_links[:20]:
-        print(f"      href={a.get('href','')[:80]} | texto={a.get_text(strip=True)[:30]}")
 
-    # Estratégia: coleta todos os links de projetos e reconstrói os dados
-    # O Catarse usa /projects/<slug> como padrão de URL
+    # Estratégia: coleta todos os links de projetos
+    # O Catarse usa /<slug>?ref=ctrse_explore como padrão de URL de projeto
     seen_links = set()
     project_links = []
-    for a in soup.find_all('a', href=re.compile(r'/projects/')):
+    for a in soup.find_all('a', href=re.compile(r'ref=ctrse_explore')):
         href = a.get('href', '')
         if not href.startswith('http'):
             href = 'https://www.catarse.me' + href
@@ -464,21 +459,25 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
 
     soup = BeautifulSoup(html, 'html.parser')
 
-    # Debug: mostra todos os links encontrados
-    all_links = soup.find_all('a', href=True)
-    print(f"   -> Total de links na página: {len(all_links)}")
-    projeto_links = [a for a in all_links if '/projeto' in a.get('href','')]
-    print(f"   -> Links com /projeto: {len(projeto_links)}")
-    for a in all_links[:25]:
-        print(f"      href={a.get('href','')[:80]} | texto={a.get_text(strip=True)[:30]}")
+    # Slugs de navegação a ignorar
+    MS_NAV = {
+        'projetos', 'conta', 'logout', 'envie-seu-projeto',
+        'quem-somos', 'perguntas', 'contato', 'conta/apoios',
+        'login', 'cadastrar', 'carrinho',
+    }
 
-    # Busca projetos pelos links /projeto/ — mais robusto que seletores de classe
+    # Busca projetos pelos links meeplestarter.com.br/<slug>
+    # O slug é direto: /artemistablegames, /token, /corujacast etc.
     seen = set()
     raw_projects = []
-    for a in soup.find_all('a', href=re.compile(r'/projeto/')):
-        href = a.get('href', '')
-        if not href.startswith('http'):
-            href = 'https://www.meeplestarter.com.br' + href
+    for a in soup.find_all('a', href=re.compile(r'meeplestarter\.com\.br/')):
+        href = a.get('href', '').strip().rstrip('/')
+        if not href:
+            continue
+        # Extrai o slug (último segmento da URL)
+        slug = href.split('meeplestarter.com.br/')[-1].split('?')[0]
+        if not slug or slug in MS_NAV or '/' in slug:
+            continue
         if href in seen:
             continue
         seen.add(href)
@@ -558,76 +557,83 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
 def _parse_playeasy_products(html: str, mode: str) -> list:
     """
     Extrai produtos do HTML da PlayEasy renderizado pelo Selenium.
-    O site usa Tailwind CSS puro — não há classes semânticas como 'product-item'.
-    Estratégia: localiza links de produto e sobe na árvore até o container do card.
+    O site usa links relativos (ex: /et-de-varginha.html) e Tailwind CSS.
+    Agrupa múltiplos links para o mesmo produto e extrai preços via regex.
     mode: 'pre-sale' ou 'promotion'
     """
     soup = BeautifulSoup(html, 'html.parser')
     results = []
-    seen = set()
 
-    # Busca todos os links que apontam para páginas de produto individuais
-    product_links = [
-        a for a in soup.find_all('a', href=True)
-        if 'playeasy.com.br' in a.get('href', '')
-        and re.search(r'/[^/]+-\d+\.html$|/[^/]+/[^/]+\.html$', a.get('href', ''))
-    ]
+    # Páginas de navegação/categoria a ignorar
+    NAV_SLUGS = {
+        'board-games', 'kits-covil', 'acessorios', 'rpg', 'editoras',
+        'promocoes', 'vitrine', 'customer', 'wishlist',
+        'cart', 'checkout', 'busca', 'search', 'login', 'conta',
+        'institutional', 'contato', 'sobre', 'faq',
+    }
 
-    # Fallback mais amplo
-    if not product_links:
-        product_links = [
-            a for a in soup.find_all('a', href=True)
-            if 'playeasy.com.br' in a.get('href', '')
-            and a.get('href', '').endswith('.html')
-            and len(a.get_text(strip=True)) > 4
-        ]
+    # Coleta todos os hrefs relativos terminados em .html (links de produto)
+    product_map = {}  # href -> list de tags <a>
+    for a in soup.find_all('a', href=True):
+        href = a.get('href', '').strip()
+        if not href.endswith('.html'):
+            continue
+        if not href.startswith('/'):
+            continue
+        # Ignora navegação
+        slug = href.lstrip('/').split('.')[0].split('?')[0]
+        if any(nav in slug for nav in NAV_SLUGS):
+            continue
+        if slug not in product_map:
+            product_map[slug] = {'href': href, 'tags': []}
+        product_map[slug]['tags'].append(a)
 
-    if not product_links:
+    if not product_map:
         print(f"   -> Nenhum link de produto encontrado.")
-        # Debug: mostra todos os links encontrados na página
-        all_links = soup.find_all('a', href=True)
-        print(f"   -> Total de links na página: {len(all_links)}")
-        for a in all_links[:20]:
-            print(f"      href={a.get('href','')[:80]} | texto={a.get_text(strip=True)[:40]}")
         return []
 
-    for a in product_links:
-        href = a.get('href', '').strip()
-        if not href or href in seen:
-            continue
+    print(f"   -> {len(product_map)} produto(s) únicos encontrados.")
 
-        # Ignora links de navegação
-        skip = ['promocoes', 'pre-venda', 'vitrine', 'categoria',
-                'busca', 'login', 'conta', 'carrinho', 'checkout',
-                'institutional', 'contato', 'sobre']
-        if any(p in href.lower() for p in skip):
-            continue
-        seen.add(href)
+    for slug, data in product_map.items():
+        href = 'https://www.playeasy.com.br' + data['href']
+        tags = data['tags']
 
-        # Sobe na árvore até encontrar o container com imagem + preço
-        container = a
-        for _ in range(8):
+        # Pega o container mais rico (que tem mais texto — nome + preço)
+        best_container = max(tags, key=lambda a: len(a.get_text(strip=True)))
+        container = best_container
+
+        # Sobe na árvore para pegar o card completo
+        for _ in range(6):
             parent = container.parent
             if parent is None or parent.name in ['body', 'html']:
                 break
-            if parent.find('img') and re.search(r'R\$', parent.get_text()):
+            text = parent.get_text()
+            if re.search(r'R\$', text) and len(text) > len(container.get_text()):
                 container = parent
+            else:
                 break
-            container = parent
 
-        # Nome
-        name_tag = container.find(['h2', 'h3', 'h4']) or a
-        name = name_tag.get('title', name_tag.get_text(strip=True)).strip()
+        # Nome: pega o link com texto mais descritivo (sem R$ e sem %)
+        name = ''
+        for a in tags:
+            t = a.get_text(strip=True)
+            if t and 'R$' not in t and '%' not in t and len(t) > len(name):
+                name = t
         if not name or len(name) < 4:
             continue
+
+        # Limpa o nome — remove textos de editora colados
+        name = re.split(r'(?=[A-Z][a-z]+\s+[A-Z])', name)[0].strip()
 
         # Imagem
         img_tag = container.find('img')
         img_url = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
 
-        # Todos os preços no container
+        # Preços via regex no texto completo do container
         price_texts = re.findall(r'R\$\s*[\d.,]+', container.get_text())
-        prices = sorted(set(clean_price(p) for p in price_texts if clean_price(p) > 0))
+        prices = sorted(set(
+            clean_price(p) for p in price_texts if clean_price(p) > 0
+        ))
 
         if mode == 'pre-sale':
             price = prices[0] if prices else 0.0
@@ -654,7 +660,7 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
                 'type': 'promotion',
             })
 
-    print(f"   -> {len(results)} produto(s) extraídos.")
+    print(f"   -> {len(results)} produto(s) extraídos com sucesso.")
     return results
 
 
