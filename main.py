@@ -75,13 +75,17 @@ def run():
             print(f"-> Duplicado: '{game['name']}'")
             continue
 
-        bgg_data = enricher.enrich_game_data(game['name'])
+        # Limpa o nome via IA — remove editora e descrição concatenados
+        clean_name = generator.extract_game_name(game['name'])
+        print(f"-> Nome limpo: '{clean_name}' (original: '{game['name']}')")
+
+        bgg_data = enricher.enrich_game_data(clean_name)
         players  = bgg_data.get('players') or "Jogadores: Sob consulta"
         image    = game.get('image') or bgg_data.get('image', '')
-        summary  = generator.generate_summary(game['name'])
+        summary  = generator.generate_summary(clean_name)
 
         processed_pre_sales.append({
-            'name':    game['name'],
+            'name':    clean_name,
             'link':    game['link'],
             'price':   game['price'],
             'image':   image,
@@ -90,22 +94,26 @@ def run():
         })
 
         if not dry_run:
-            database.mark_news_as_sent('PlayEasy Pre-Sale', game['name'], game['link'])
+            database.mark_news_as_sent('PlayEasy Pre-Sale', clean_name, game['link'])
 
     # ── PROMOÇÕES PLAYEASY ────────────────────────────────────
     print("\nProcessando promoções PlayEasy...")
     for game in raw_promotions:
-        if database.is_duplicate_promotion(game['name']):
-            print(f"-> Duplicado (30 dias): '{game['name']}'")
+        # Limpa o nome via IA antes de checar duplicidade
+        clean_name = generator.extract_game_name(game['name'])
+        print(f"-> Nome limpo: '{clean_name}' (original: '{game['name']}')")
+
+        if database.is_duplicate_promotion(clean_name):
+            print(f"-> Duplicado (30 dias): '{clean_name}'")
             continue
 
-        bgg_data = enricher.enrich_game_data(game['name'])
+        bgg_data = enricher.enrich_game_data(clean_name)
         players  = bgg_data.get('players') or "Jogadores: Sob consulta"
         image    = game.get('image') or bgg_data.get('image', '')
-        summary  = generator.generate_summary(game['name'])
+        summary  = generator.generate_summary(clean_name)
 
         processed_promotions.append({
-            'name':       game['name'],
+            'name':       clean_name,
             'link':       game['link'],
             'price_from': game['price_from'],
             'price_to':   game['price_to'],
@@ -117,7 +125,7 @@ def run():
 
         if not dry_run:
             database.mark_promotion_as_sent(
-                game['name'], game['link'],
+                clean_name, game['link'],
                 game['price_from'], game['price_to'], game['discount']
             )
 

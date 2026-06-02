@@ -610,44 +610,68 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
                 if img_url:
                     break
 
-        # 2. Nome — link com texto que não é preço, desconto ou CTA
+        # 2. Nome — extrai apenas o nome do jogo, sem editora nem descrição
         SKIP_PATTERNS = ('r$', '%', 'off', 'pré-venda', 'add ao', 'carrinho',
                          'à vista', 'ou em', 'pixou', 'preorderconsentrequired')
-        name = ''
+        raw_name = ''
         for a in tags:
             t = a.get_text(strip=True)
             tl = t.lower()
             if not t or any(p in tl for p in SKIP_PATTERNS):
                 continue
-            # Prefere o texto mais longo que parece nome de produto
-            if len(t) > len(name):
-                name = t
+            if len(t) > len(raw_name):
+                raw_name = t
 
-        # Limpa o nome: remove nome de editora colado no final
-        # Ex: "ET de VarginhaBoard Game Bureau" -> "ET de Varginha"
-        name = re.sub(
-            r'([a-záéíóúàãõâêôçA-Z])'   # fim de palavra
-            r'([A-Z][a-z])',              # início de nova palavra em maiúscula colada
-            r'\1 \2', name
-        )
-        # Corta no primeiro padrão "EditoRA Nome" — editoras costumam ter 2+ palavras
-        # Estratégia simples: pega apenas até o primeiro "bloco" de maiúsculas seguidas
-        parts = re.split(r'(?<=[a-záéíóúàãõâêôç])\s+(?=[A-Z][a-záéíóúàãõâêôç]+\s+[A-Z])', name)
-        name = parts[0].strip()
+        # Corta o nome no ponto onde o texto da editora começa colado SEM ESPAÇO
+        # Ex: "ET de VarginhaBoard Game" → "ET de Varginha" (corta em "a" + "B")
+        # Ex: "Duna: Traição AsmodeeA" → "Duna: Traição Asmodee" → ver próximo passo
+        name = re.split(r'(?<=[a-záéíóúàãõâêôç])(?=[A-Z])', raw_name)[0].strip()
+
+        # Corta também onde o nome termina e a editora vem separada por espaço
+        # Só corta quando a próxima "palavra" é nome próprio seguido imediatamente
+        # de outra maiúscula colada (ex: "Asmodee" + "A" sem espaço)
+        name = re.split(r'\s+(?=[A-Z][a-záéíóúàãõâêôç]*[A-Z])', name)[0].strip()
+
+        # Limita a 60 caracteres para evitar descrições longas
+        if len(name) > 60:
+            name = name[:60].rsplit(' ', 1)[0].strip()
 
         if not name or len(name) < 3:
             continue
 
-        # 3. Preços — todos os R$ encontrados nos textos do grupo
-        all_price_text = ' '.join(a.get_text() for a in tags)
-        price_values = sorted(set(
-            clean_price(p)
-            for p in re.findall(r'R\$\s*[\d.,]+', all_price_text)
-            if clean_price(p) > 0
-        ))
+        # 3. Preços — filtra parcelas de parcelamento
+        # O link de preço contém texto como "R$ 249,90R$ 232,41-7%À vista no pixou em 5x de R$ 46,48"
+        # Precisamos dos dois primeiros preços (original e promocional), ignorando parcelas
+        price_link_text = ''
+        for a in tags:
+            t = a.get_text(strip=True)
+            if 'r$' in t.lower() and any(c in t for c in ['%', 'à vista', 'pix']):
+                price_link_text = t
+                break
+
+        # Fallback: concatena texto de todos os tags com R$
+        if not price_link_text:
+            price_link_text = ' '.join(
+                a.get_text() for a in tags if 'R$' in a.get_text()
+            )
+
+        # Extrai todos os valores R$ encontrados
+        all_raw_prices = re.findall(r'R\$\s*([\d.,]+)', price_link_text)
+        all_prices = sorted(set(
+            clean_price('R$ ' + p) for p in all_raw_prices
+            if clean_price('R$ ' + p) > 0
+        ), reverse=True)  # maior para menor
+
+        # Filtra parcelas: remove preços menores que 30% do maior preço
+        if all_prices:
+            max_price = all_prices[0]
+            main_prices = [p for p in all_prices if p >= max_price * 0.30]
+        else:
+            main_prices = []
 
         if mode == 'pre-sale':
-            price = price_values[0] if price_values else 0.0
+            # Para pré-venda, pega o menor preço dos principais (preço atual)
+            price = main_prices[-1] if main_prices else 0.0
             results.append({
                 'name': name, 'link': full_url,
                 'price': price, 'image': img_url,
@@ -655,10 +679,10 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
             })
 
         elif mode == 'promotion':
-            if len(price_values) < 2:
+            if len(main_prices) < 2:
                 continue
-            price_from = max(price_values)
-            price_to   = min(price_values)
+            price_from = main_prices[0]   # maior = preço original
+            price_to   = main_prices[-1]  # menor dos principais = preço promocional
             if price_from <= price_to:
                 continue
             discount = int(round((1 - price_to / price_from) * 100))
