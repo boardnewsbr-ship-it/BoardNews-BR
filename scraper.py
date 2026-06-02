@@ -713,7 +713,7 @@ def scrape_playeasy_promotions(max_pages: int = 3) -> list:
     results = []
 
     for page in range(1, max_pages + 1):
-        url = f"{base_url}?p={page}" if page > 1 else base_url
+        url = f"{base_url}?page={page}" if page > 1 else base_url
         print(f"Raspando promoções: {url}")
 
         html = _selenium_get(url, wait_seconds=6, wait_for_selector='a[href*="playeasy"]')
