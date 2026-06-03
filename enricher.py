@@ -20,10 +20,9 @@ _BGG_TOKEN_AVAILABLE = None   # None = não verificado ainda
 
 def _check_bgg_token() -> str | None:
     """
-    Retorna o token BGG se configurado, ou None.
-    Imprime aviso apenas na primeira vez que for chamado sem token.
+    Retorna o token BGG se configurado, ou 'public' para acesso público gratuito.
     """
-    global _BGG_TOKEN_WARNING_SHOWN, _BGG_TOKEN_AVAILABLE
+    global _BGG_TOKEN_AVAILABLE
 
     if _BGG_TOKEN_AVAILABLE is not None:
         return _BGG_TOKEN_AVAILABLE
@@ -40,21 +39,14 @@ def _check_bgg_token() -> str | None:
         except Exception:
             pass
 
-    _BGG_TOKEN_AVAILABLE = token if token else ""
-
-    if not _BGG_TOKEN_AVAILABLE and not _BGG_TOKEN_WARNING_SHOWN:
-        print("AVISO: BGG_API_TOKEN não configurada. "
-              "Enriquecimento de imagem/jogadores via BGG desativado. "
-              "Configure em: https://boardgamegeek.com/applications")
-        _BGG_TOKEN_WARNING_SHOWN = True
-
-    return _BGG_TOKEN_AVAILABLE or None
+    _BGG_TOKEN_AVAILABLE = token if token else "public"
+    return _BGG_TOKEN_AVAILABLE
 
 
 def get_bgg_headers() -> dict:
     headers = HEADERS.copy()
     token = _check_bgg_token()
-    if token:
+    if token and token != "public":
         headers['Authorization'] = f"Bearer {token}"
     return headers
 

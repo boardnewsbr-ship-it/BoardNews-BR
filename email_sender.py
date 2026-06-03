@@ -172,7 +172,7 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
                 <div class="section-title">I. Notícias — LudoNews</div>
         """
         for item in news_list:
-            image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["title"]}"></div>' if item.get('image') else ''
+            image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["title"]}" width="200" style="max-width: 200px; max-height: 200px; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; object-fit: contain;"></div>' if item.get('image') else ''
 
             html += f"""
                 <div class="item">
@@ -192,7 +192,7 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
         """
         for item in pre_sales:
             players_html = f'<div class="item-players">{item["players"]}</div>' if item.get('players') else ''
-            image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}"></div>' if item.get('image') else ''
+            image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}" width="200" style="max-width: 200px; max-height: 200px; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; object-fit: contain;"></div>' if item.get('image') else ''
             price_formatted = format_price(item["price"])
             
             html += f"""
@@ -214,7 +214,7 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
         """
         for item in promotions:
             players_html = f'<div class="item-players">{item["players"]}</div>' if item.get('players') else ''
-            image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}"></div>' if item.get('image') else ''
+            image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}" width="200" style="max-width: 200px; max-height: 200px; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; object-fit: contain;"></div>' if item.get('image') else ''
             price_from_fmt = format_price(item["price_from"])
             price_to_fmt = format_price(item["price_to"])
             
@@ -247,7 +247,7 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
         if catarse_items:
             html += '<p style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#718096;margin:0 0 12px 0;">📦 Catarse</p>'
             for item in catarse_items:
-                image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}"></div>' if item.get('image') else ''
+                image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}" width="200" style="max-width: 200px; max-height: 200px; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; object-fit: contain;"></div>' if item.get('image') else ''
                 html += f"""
                     <div class="item">
                         <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["name"]}</a></h3>
@@ -260,7 +260,7 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
         if meeple_items:
             html += '<p style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#718096;margin:16px 0 12px 0;">🎲 Meeple Starter</p>'
             for item in meeple_items:
-                image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}"></div>' if item.get('image') else ''
+                image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}" width="200" style="max-width: 200px; max-height: 200px; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; object-fit: contain;"></div>' if item.get('image') else ''
                 html += f"""
                     <div class="item">
                         <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["name"]}</a></h3>

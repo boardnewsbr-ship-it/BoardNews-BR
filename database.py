@@ -118,7 +118,7 @@ def mark_promotion_as_sent(game_name: str, url: str, price_from: float,
     promo_id = hashlib.md5(normalized.encode('utf-8')).hexdigest()
     try:
         conn.execute('''
-            INSERT OR IGNORE INTO sent_promotions
+            INSERT OR REPLACE INTO sent_promotions
                 (id, game_name, url, price_from, price_to, discount, sent_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (promo_id, game_name, url, price_from, price_to, discount,

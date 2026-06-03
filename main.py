@@ -71,13 +71,13 @@ def run():
     # ── PRÉ-VENDAS PLAYEASY ───────────────────────────────────
     print("\nProcessando pré-vendas PlayEasy...")
     for game in raw_pre_sales:
-        if database.is_duplicate_news(game['link'], game['name']):
-            print(f"-> Duplicado: '{game['name']}'")
-            continue
-
-        # Limpa o nome via IA — remove editora e descrição concatenados
+        # Limpa o nome via IA antes de checar duplicidade — remove editora e descrição concatenados
         clean_name = generator.extract_game_name(game['name'])
         print(f"-> Nome limpo: '{clean_name}' (original: '{game['name']}')")
+
+        if database.is_duplicate_news(game['link'], clean_name):
+            print(f"-> Duplicado: '{clean_name}'")
+            continue
 
         bgg_data = enricher.enrich_game_data(clean_name)
         players  = bgg_data.get('players') or "Jogadores: Sob consulta"
