@@ -1,60 +1,14 @@
 {
-  "publishers": [
-    {
-      "name": "Devir Brasil",
-      "url": "https://devir.com.br/jogos-de-tabuleiro/",
-      "feed_url": "https://devir.com.br/category/jogos-de-tabuleiro/feed/",
-      "instagram_handle": "devirbrasil"
-    },
-    {
-      "name": "Galápagos Jogos",
-      "url": "https://mundogalapagos.com.br/",
-      "feed_url": "",
-      "instagram_handle": "galapagosjogos"
-    },
-    {
-      "name": "Paper Games",
-      "url": "https://papergames.com.br/blog/",
-      "feed_url": "https://papergames.com.br/feed/",
-      "instagram_handle": "papergamesbr"
-    },
-    {
-      "name": "Grok Games",
-      "url": "https://grok-games.lojaintegrada.com.br/blog",
-      "feed_url": "",
-      "instagram_handle": "grok.games"
-    },
-    {
-      "name": "Meeple BR",
-      "url": "https://meeplebr.com/blog/",
-      "feed_url": "https://meeplebr.com/feed/",
-      "instagram_handle": "meeplebr"
-    },
-    {
-      "name": "Redbox Editora",
-      "url": "https://www.redboxeditora.com.br/",
-      "feed_url": "",
-      "instagram_handle": "redbox.editora"
-    },
-    {
-      "name": "Buró Jogos",
-      "url": "https://burojogos.com.br/",
-      "feed_url": "",
-      "instagram_handle": "burojogos"
-    }
-  ],
   "email": {
     "sender": "BoardNews BR <onboarding@resend.dev>",
     "receiver": "viniciusbcirne@gmail.com"
   },
   "settings": {
     "dry_run": false,
-    "bgg_timeout_seconds": 10,
     "request_timeout_seconds": 15,
     "max_pre_sale_pages": 2,
     "max_promo_pages": 3,
     "news_days_window": 2,
-    "crowdfunding_days_window": 2,
-    "proxy_url": "https://noticias.boardnewsbr.workers.dev"
+    "crowdfunding_days_window": 2
   }
 }

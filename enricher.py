@@ -13,20 +13,22 @@ HEADERS = {
                   '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
-# Controle de aviso: imprime apenas uma vez por execução
-_BGG_TOKEN_WARNING_SHOWN = False
-_BGG_TOKEN_AVAILABLE = None   # None = não verificado ainda
+_BGG_TOKEN_CHECKED = False
+_BGG_TOKEN_VALUE   = None   # None = sem token = BGG desabilitado
 
 
 def _check_bgg_token() -> str | None:
     """
-    Retorna o token BGG se configurado, ou 'public' para acesso público gratuito.
+    Retorna o token BGG configurado, ou None se não houver.
+    Quando retorna None, todas as chamadas ao BGG são ignoradas silenciosamente.
+    Imprime aviso apenas na primeira verificação.
     """
-    global _BGG_TOKEN_AVAILABLE
+    global _BGG_TOKEN_CHECKED, _BGG_TOKEN_VALUE
 
-    if _BGG_TOKEN_AVAILABLE is not None:
-        return _BGG_TOKEN_AVAILABLE
+    if _BGG_TOKEN_CHECKED:
+        return _BGG_TOKEN_VALUE
 
+    _BGG_TOKEN_CHECKED = True
     token = os.environ.get("BGG_API_TOKEN", "").strip()
 
     if not token:
@@ -39,14 +41,20 @@ def _check_bgg_token() -> str | None:
         except Exception:
             pass
 
-    _BGG_TOKEN_AVAILABLE = token if token else "public"
-    return _BGG_TOKEN_AVAILABLE
+    if token:
+        _BGG_TOKEN_VALUE = token
+        print(f"BGG: token configurado, enriquecimento ativo.")
+    else:
+        _BGG_TOKEN_VALUE = None
+        print("BGG: BGG_API_TOKEN não configurada — enriquecimento desabilitado.")
+
+    return _BGG_TOKEN_VALUE
 
 
 def get_bgg_headers() -> dict:
     headers = HEADERS.copy()
     token = _check_bgg_token()
-    if token and token != "public":
+    if token:
         headers['Authorization'] = f"Bearer {token}"
     return headers
 
@@ -61,7 +69,6 @@ def clean_game_name(name: str) -> str:
 
 
 def search_bgg_game_id(game_name: str) -> str | None:
-    """Busca o jogo no BGG. Retorna None silenciosamente se sem token."""
     if not _check_bgg_token():
         return None
 
@@ -82,7 +89,7 @@ def search_bgg_game_id(game_name: str) -> str | None:
                 print(f"   -> [BGG] ID {bgg_id} para '{cleaned}'")
                 return bgg_id
         elif r.status_code == 401:
-            return None  # Token inválido ou expirado — silencioso
+            return None
         else:
             print(f"BGG Search status {r.status_code} para '{cleaned}'")
 
@@ -110,7 +117,6 @@ def search_bgg_game_id(game_name: str) -> str | None:
 
 
 def fetch_bgg_game_details(bgg_id: str) -> dict | None:
-    """Busca imagem e jogadores por ID no BGG."""
     if not bgg_id or not _check_bgg_token():
         return None
 
@@ -125,33 +131,25 @@ def fetch_bgg_game_details(bgg_id: str) -> dict | None:
                 thumb_tag = item.find('thumbnail')
                 image_url = (image_tag.text if image_tag is not None
                              else (thumb_tag.text if thumb_tag is not None else None))
-
                 min_p = item.find('minplayers')
                 max_p = item.find('maxplayers')
                 mn = min_p.get('value') if min_p is not None else None
                 mx = max_p.get('value') if max_p is not None else None
-
                 players = None
                 if mn and mx:
-                    if mn == mx:
-                        players = f"{mn} jogador" if mn == '1' else f"{mn} jogadores"
-                    else:
-                        players = f"{mn}-{mx} jogadores"
-
+                    players = (f"{mn} jogador" if mn == mx == '1'
+                               else f"{mn} jogadores" if mn == mx
+                               else f"{mn}-{mx} jogadores")
                 return {'image': image_url, 'players': players}
         elif r.status_code == 401:
             return None
     except Exception as e:
         print(f"Erro BGG details ID {bgg_id}: {e}")
-
     return None
 
 
 def enrich_game_data(game_name: str) -> dict:
-    """
-    Enriquece dados do jogo via BGG.
-    Retorna {'image': None, 'players': None} se BGG indisponível.
-    """
+    """Enriquece dados do jogo via BGG. Retorna vazio se BGG indisponível."""
     if not _check_bgg_token():
         return {'image': None, 'players': None}
 
@@ -162,5 +160,4 @@ def enrich_game_data(game_name: str) -> dict:
         details = fetch_bgg_game_details(bgg_id)
         if details:
             return details
-
     return {'image': None, 'players': None}

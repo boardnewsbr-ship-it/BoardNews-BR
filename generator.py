@@ -79,57 +79,6 @@ def call_groq(prompt: str, response_json: bool = False) -> str:
                 
     return None
 
-def filter_publisher_post(title: str, content: str) -> bool:
-    """
-    Usa o Llama 3 via Groq para filtrar posts das editoras (blogs ou Instagram).
-    Retorna True se for um anúncio/novidade de lançamento de jogo, expansão, pré-venda ou evento oficial de jogos.
-    Retorna False para posts sociais genéricos, institucionais vazios, memes, etc.
-    """
-    if not get_api_key():
-        # Fallback se não houver API key: busca termos chaves no título
-        keywords = ["lançamento", "anúncio", "chegou", "pré-venda", "novidade", "revelado", "vem aí", "evento", "torneio", "campeonato", "encontro"]
-        title_lower = title.lower()
-        return any(k in title_lower for k in keywords)
-
-    prompt = f"""
-    Você é um assistente especialista em jogos de tabuleiro (board games) e atua na curadoria do canal "BoardNews BR".
-    Analise o título e o conteúdo do post de uma editora (que pode ser do blog oficial ou da rede social Instagram) e classifique se ele é de valor:
-    
-    1. APROVE APENAS se o post for sobre:
-       - Um anúncio de lançamento futuro de jogo ou expansão.
-       - Abertura de pré-vendas ou a chegada física de um jogo/expansão às lojas brasileiras.
-       - Novidades/teasers de novos títulos que estão sendo localizados.
-       - Eventos oficiais de jogos de tabuleiro organizados pela editora (ex: torneios de jogos específicos, campeonatos nacionais/locais, encontros públicos de jogatina com demonstrações, palestras e feiras presenciais).
-       
-    2. REJEITE imediatamente se for sobre:
-       - Posts sociais genéricos, mensagens de "bom dia", datas comemorativas sem relação com jogos.
-       - Fotos de bastidores da empresa, memes, piadas, enquetes sem valor noticioso.
-       - Avisos burocráticos (ex: recesso de feriado, aviso de envio atrasado, vagas de emprego).
-       - Posts institucionais corporativos ou fotos de reuniões da empresa.
-
-    Retorne APENAS um objeto JSON no formato exato:
-    {{
-      "is_announcement": true ou false,
-      "reason": "uma frase curta explicando o motivo da aprovação ou rejeição"
-    }}
-
-    Título do Post: "{title}"
-    Conteúdo do Post: "{content}"
-    """
-    
-    res_text = call_groq(prompt, response_json=True)
-    if res_text:
-        try:
-            data = json.loads(res_text)
-            return bool(data.get("is_announcement", False))
-        except Exception as e:
-            print(f"Erro ao parsear resposta de filtragem do Groq: {e}. Texto original: {res_text}")
-            
-    # Se a chamada à API do Groq falhar ou retornar erro de cota (429), aplica o fallback local baseado em palavras-chaves
-    keywords = ["lançamento", "anúncio", "chegou", "pré-venda", "novidade", "revelado", "vem aí", "unmatched", "puerto rico", "evento", "torneio", "campeonato", "encontro"]
-    title_lower = title.lower()
-    return any(k in title_lower for k in keywords)
-
 
 def translate_game_name(game_name: str) -> str:
     """
