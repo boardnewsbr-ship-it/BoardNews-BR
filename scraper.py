@@ -556,7 +556,81 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
 # PLAYEASY — Pré-vendas
 # ─────────────────────────────────────────────
 
-def _parse_playeasy_products(html: str, mode: str) -> list:
+def scrape_playeasy_product_description(url: str, driver=None) -> str | None:
+    """
+    Busca a descrição real do produto na página individual da PlayEasy.
+    Recebe um driver Selenium já aberto para reutilização (mais eficiente).
+    Se driver=None, abre e fecha um driver próprio.
+
+    Tenta múltiplos seletores CSS em ordem de prioridade.
+    Se não encontrar, imprime o HTML para diagnóstico.
+    """
+    own_driver = False
+    if driver is None:
+        driver = _get_selenium_driver()
+        own_driver = True
+        if not driver:
+            return None
+
+    try:
+        driver.get(url)
+        time.sleep(4)
+        html = driver.page_source
+    except Exception as e:
+        print(f"   -> Erro ao acessar página do produto {url}: {e}")
+        return None
+    finally:
+        if own_driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # Seletores em ordem de prioridade — do mais específico ao mais genérico
+    SELECTORS = [
+        'div.product-description',
+        'div[class*="description"]',
+        '#description',
+        'div.description',
+        'section.description',
+        'div.product-info-description',
+        'div.tab-content',
+        'div.std',
+        'div[class*="content"] p',
+        'div[class*="detail"] p',
+        'main p',
+    ]
+
+    for selector in SELECTORS:
+        try:
+            tag = soup.select_one(selector)
+            if tag:
+                text = tag.get_text(separator=' ', strip=True)
+                # Filtra textos muito curtos ou que parecem ser menus/navegação
+                if len(text) > 40 and not any(
+                    nav in text.lower()
+                    for nav in ['adicionar ao carrinho', 'comprar agora', 'favoritos',
+                                'compartilhar', 'entrar', 'criar conta']
+                ):
+                    print(f"   -> Descrição encontrada via seletor '{selector}'")
+                    return text[:800]
+        except Exception:
+            continue
+
+    # Nenhum seletor funcionou — imprime estrutura para diagnóstico
+    print(f"   -> Descrição não encontrada em {url}. DEBUG:")
+    for tag in soup.find_all(True, class_=True)[:20]:
+        classes = ' '.join(tag.get('class', []))[:60]
+        text = tag.get_text(strip=True)[:60]
+        if len(text) > 15:
+            print(f"      <{tag.name} class=\"{classes}\"> {text}")
+
+    return None
+
+
+
     """
     Extrai produtos do HTML da PlayEasy renderizado pelo Selenium.
     O site usa links relativos (ex: /et-de-varginha.html) e Tailwind CSS.
@@ -702,24 +776,36 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
 def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
     """
     Raspa os produtos em pré-venda da PlayEasy via Selenium.
-    URL atualizada: /vitrine/pre-venda.html
+    Reutiliza um único driver Chrome para todas as páginas.
     """
     base_url = "https://www.playeasy.com.br/vitrine/pre-venda.html"
     results = []
+    driver = _get_selenium_driver()
+    if not driver:
+        print("   -> Selenium indisponível. Pré-vendas ignoradas.")
+        return []
 
-    for page in range(1, max_pages + 1):
-        url = f"{base_url}?p={page}" if page > 1 else base_url
-        print(f"Raspando pré-vendas: {url}")
+    try:
+        for page in range(1, max_pages + 1):
+            url = f"{base_url}?page={page}" if page > 1 else base_url
+            print(f"Raspando pré-vendas: {url}")
+            try:
+                driver.get(url)
+                time.sleep(6)
+                html = driver.page_source
+            except Exception as e:
+                print(f"   -> Erro Selenium página {page}: {e}")
+                break
 
-        html = _selenium_get(url, wait_seconds=6, wait_for_selector='a[href*="playeasy"]')
-        if not html:
-            print("   -> Selenium indisponível. Pré-vendas ignoradas.")
-            break
-
-        page_results = _parse_playeasy_products(html, mode='pre-sale')
-        if not page_results:
-            break
-        results.extend(page_results)
+            page_results = _parse_playeasy_products(html, mode='pre-sale')
+            if not page_results:
+                break
+            results.extend(page_results)
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
     return results
 
@@ -728,26 +814,41 @@ def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
 # PLAYEASY — Promoções
 # ─────────────────────────────────────────────
 
-def scrape_playeasy_promotions(max_pages: int = 3) -> list:
+def scrape_playeasy_promotions(max_pages: int = 20) -> list:
     """
     Raspa os produtos em promoção da PlayEasy via Selenium.
+    Reutiliza um único driver Chrome para todas as páginas (mais eficiente).
     Retorna apenas itens COM desconto real (price_from > price_to).
     """
     base_url = "https://www.playeasy.com.br/promocoes.html"
     results = []
+    driver = _get_selenium_driver()
+    if not driver:
+        print("   -> Selenium indisponível. Promoções ignoradas.")
+        return []
 
-    for page in range(1, max_pages + 1):
-        url = f"{base_url}?page={page}" if page > 1 else base_url
-        print(f"Raspando promoções: {url}")
+    try:
+        for page in range(1, max_pages + 1):
+            url = f"{base_url}?page={page}" if page > 1 else base_url
+            print(f"Raspando promoções: {url}")
+            try:
+                driver.get(url)
+                time.sleep(6)
+                html = driver.page_source
+            except Exception as e:
+                print(f"   -> Erro Selenium página {page}: {e}")
+                break
 
-        html = _selenium_get(url, wait_seconds=6, wait_for_selector='a[href*="playeasy"]')
-        if not html:
-            print("   -> Selenium indisponível. Promoções ignoradas.")
-            break
-
-        page_results = _parse_playeasy_products(html, mode='promotion')
-        if not page_results:
-            break
-        results.extend(page_results)
+            page_results = _parse_playeasy_products(html, mode='promotion')
+            if not page_results:
+                print(f"   -> Nenhum produto na página {page}, parando paginação.")
+                break
+            results.extend(page_results)
+            print(f"   -> Página {page}: {len(page_results)} produtos. Total acumulado: {len(results)}.")
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
     return results

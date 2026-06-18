@@ -71,7 +71,7 @@ def run():
     # ── PRÉ-VENDAS PLAYEASY ───────────────────────────────────
     print("\nProcessando pré-vendas PlayEasy...")
     for game in raw_pre_sales:
-        # Limpa o nome via IA antes de checar duplicidade — remove editora e descrição concatenados
+        # Limpa o nome via IA — remove editora e descrição concatenados
         clean_name = generator.extract_game_name(game['name'])
         print(f"-> Nome limpo: '{clean_name}' (original: '{game['name']}')")
 
@@ -82,7 +82,14 @@ def run():
         bgg_data = enricher.enrich_game_data(clean_name)
         players  = bgg_data.get('players') or "Jogadores: Sob consulta"
         image    = game.get('image') or bgg_data.get('image', '')
-        summary  = generator.generate_summary(clean_name)
+
+        # Tenta pegar a descrição real da página do produto
+        description = scraper.scrape_playeasy_product_description(game['link'])
+        if not description:
+            print(f"   -> Descrição não encontrada, usando IA como fallback.")
+            description = generator.generate_summary(clean_name)
+        else:
+            print(f"   -> Usando descrição real da página.")
 
         processed_pre_sales.append({
             'name':    clean_name,
@@ -90,7 +97,7 @@ def run():
             'price':   game['price'],
             'image':   image,
             'players': players,
-            'summary': summary,
+            'summary': description,
         })
 
         if not dry_run:
@@ -110,7 +117,14 @@ def run():
         bgg_data = enricher.enrich_game_data(clean_name)
         players  = bgg_data.get('players') or "Jogadores: Sob consulta"
         image    = game.get('image') or bgg_data.get('image', '')
-        summary  = generator.generate_summary(clean_name)
+
+        # Tenta pegar a descrição real da página do produto
+        description = scraper.scrape_playeasy_product_description(game['link'])
+        if not description:
+            print(f"   -> Descrição não encontrada, usando IA como fallback.")
+            description = generator.generate_summary(clean_name)
+        else:
+            print(f"   -> Usando descrição real da página.")
 
         processed_promotions.append({
             'name':       clean_name,
@@ -120,7 +134,7 @@ def run():
             'discount':   game['discount'],
             'image':      image,
             'players':    players,
-            'summary':    summary,
+            'summary':    description,
         })
 
         if not dry_run:
