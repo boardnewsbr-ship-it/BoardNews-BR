@@ -562,8 +562,15 @@ def scrape_playeasy_product_description(url: str, driver=None) -> str | None:
     Recebe um driver Selenium já aberto para reutilização (mais eficiente).
     Se driver=None, abre e fecha um driver próprio.
 
-    Tenta múltiplos seletores CSS em ordem de prioridade.
-    Se não encontrar, imprime o HTML para diagnóstico.
+    Estratégia (confirmada via inspeção real do HTML da PlayEasy):
+    1. div.prose — classe do Tailwind Typography usada especificamente
+       para o bloco de texto rico da descrição do produto.
+    2. Fallback estrutural: localiza o <h2>Descrição</h2> e pega a
+       <div> imediatamente seguinte — resiliente a mudanças de classes
+       CSS geradas por build (comum em apps Next.js/React).
+
+    Não há fallback genérico nem geração por IA: se nenhuma das duas
+    estratégias encontrar o texto, retorna None.
     """
     own_driver = False
     if driver is None:
@@ -588,45 +595,25 @@ def scrape_playeasy_product_description(url: str, driver=None) -> str | None:
 
     soup = BeautifulSoup(html, 'html.parser')
 
-    # Seletores em ordem de prioridade — do mais específico ao mais genérico
-    SELECTORS = [
-        'div.product-description',
-        'div[class*="description"]',
-        '#description',
-        'div.description',
-        'section.description',
-        'div.product-info-description',
-        'div.tab-content',
-        'div.std',
-        'div[class*="content"] p',
-        'div[class*="detail"] p',
-        'main p',
-    ]
+    # 1. Seletor direto — div.prose (Tailwind Typography)
+    tag = soup.select_one('div.prose')
+    if tag:
+        text = tag.get_text(separator=' ', strip=True)
+        if len(text) > 20:
+            print(f"   -> Descrição encontrada via 'div.prose'")
+            return text[:800]
 
-    for selector in SELECTORS:
-        try:
-            tag = soup.select_one(selector)
-            if tag:
-                text = tag.get_text(separator=' ', strip=True)
-                # Filtra textos muito curtos ou que parecem ser menus/navegação
-                if len(text) > 40 and not any(
-                    nav in text.lower()
-                    for nav in ['adicionar ao carrinho', 'comprar agora', 'favoritos',
-                                'compartilhar', 'entrar', 'criar conta']
-                ):
-                    print(f"   -> Descrição encontrada via seletor '{selector}'")
+    # 2. Fallback estrutural — <h2>Descrição</h2> + <div> seguinte
+    for h2 in soup.find_all('h2'):
+        if h2.get_text(strip=True).lower() == 'descrição':
+            sibling = h2.find_next_sibling('div')
+            if sibling:
+                text = sibling.get_text(separator=' ', strip=True)
+                if len(text) > 20:
+                    print(f"   -> Descrição encontrada via <h2>Descrição</h2> + div seguinte")
                     return text[:800]
-        except Exception:
-            continue
 
-    # Nenhum seletor funcionou — imprime estrutura para diagnóstico
-    print(f"   -> Descrição não encontrada em {url}. DEBUG:")
-    for tag in soup.find_all(True, class_=True)[:20]:
-        classes = ' '.join(tag.get('class', []))[:60]
-        text = tag.get_text(strip=True)[:60]
-        if len(text) > 15:
-            print(f"      <{tag.name} class=\"{classes}\"> {text}")
-
+    print(f"   -> Descrição não encontrada em {url} (nenhuma das 2 estratégias funcionou).")
     return None
 
 

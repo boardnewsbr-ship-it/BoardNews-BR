@@ -83,11 +83,11 @@ def run():
         players  = bgg_data.get('players') or "Jogadores: Sob consulta"
         image    = game.get('image') or bgg_data.get('image', '')
 
-        # Tenta pegar a descrição real da página do produto
+        # Busca a descrição real da página do produto (sem fallback de IA)
         description = scraper.scrape_playeasy_product_description(game['link'])
         if not description:
-            print(f"   -> Descrição não encontrada, usando IA como fallback.")
-            description = generator.generate_summary(clean_name)
+            print(f"   -> Descrição não encontrada no site.")
+            description = "Descrição não disponível no momento. Veja mais detalhes no link do produto."
         else:
             print(f"   -> Usando descrição real da página.")
 
@@ -118,11 +118,11 @@ def run():
         players  = bgg_data.get('players') or "Jogadores: Sob consulta"
         image    = game.get('image') or bgg_data.get('image', '')
 
-        # Tenta pegar a descrição real da página do produto
+        # Busca a descrição real da página do produto (sem fallback de IA)
         description = scraper.scrape_playeasy_product_description(game['link'])
         if not description:
-            print(f"   -> Descrição não encontrada, usando IA como fallback.")
-            description = generator.generate_summary(clean_name)
+            print(f"   -> Descrição não encontrada no site.")
+            description = "Descrição não disponível no momento. Veja mais detalhes no link do produto."
         else:
             print(f"   -> Usando descrição real da página.")
 
