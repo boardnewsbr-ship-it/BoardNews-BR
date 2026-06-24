@@ -384,14 +384,6 @@ def scrape_catarse(days_window: int = 2) -> list:
             if t.get_text(strip=True) and t.get_text(strip=True) != name
         )[:200] or name
 
-        combined = (name + ' ' + description).lower()
-        keywords = ['tabuleiro', 'board game', 'jogo', 'cartas', 'rpg',
-                    'dado', 'fichas', 'miniatura', 'estratégia', 'cooperativo',
-                    'dados', 'card game', 'tcg', 'lcg', 'jdr', 'wargame']
-        if not any(kw in combined for kw in keywords):
-            print(f"   -> Ignorado (não é jogo): '{name}'")
-            continue
-
         end_date = None
         for tag in container.find_all(['span', 'p', 'div', 'time']):
             raw = tag.get('datetime', '') or tag.get_text(strip=True)
@@ -617,7 +609,7 @@ def scrape_playeasy_product_description(url: str, driver=None) -> str | None:
     return None
 
 
-
+def _parse_playeasy_products(html: str, mode: str) -> list:
     """
     Extrai produtos do HTML da PlayEasy renderizado pelo Selenium.
     O site usa links relativos (ex: /et-de-varginha.html) e Tailwind CSS.
