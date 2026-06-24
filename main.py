@@ -145,7 +145,23 @@ def run():
 
     # ── FINANCIAMENTOS COLETIVOS ──────────────────────────────
     print("\nProcessando financiamentos coletivos...")
-    for project in raw_catarse + raw_meeple:
+
+    # Filtro via IA aplicado SOMENTE ao Catarse: a categoria "Jogos" daquela
+    # plataforma mistura jogos de tabuleiro/RPG/card game com jogos digitais.
+    # O Meeple Starter não passa por este filtro pois já é dedicado a tabuleiro.
+    filtered_catarse = []
+    for project in raw_catarse:
+        name = project.get('name', '')
+        description = project.get('description', '')
+        if generator.is_board_game_project(name, description):
+            filtered_catarse.append(project)
+        else:
+            print(f"-> Excluído [Catarse] (jogo digital): '{name}'")
+
+    print(f"   -> Catarse: {len(filtered_catarse)}/{len(raw_catarse)} projeto(s) "
+          f"mantidos após filtro de jogo digital.")
+
+    for project in filtered_catarse + raw_meeple:
         platform = project.get('platform', 'desconhecido')
         name     = project.get('name', '')
 

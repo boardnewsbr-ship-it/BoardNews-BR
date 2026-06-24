@@ -312,93 +312,146 @@ def _selenium_get(url: str, wait_seconds: int = 4,
 # FINANCIAMENTO COLETIVO — Catarse
 # ─────────────────────────────────────────────
 
+def _parse_catarse_deadline(text: str) -> str | None:
+    """
+    Interpreta os formatos de prazo do novo Catarse (catarse.com.br):
+    - "Faltam 17 dias"               -> calcula data futura
+    - "Lançamento em 15d 12h 43m"    -> projeto ainda não lançado (comingSoon)
+    - "Lançamento em breve"          -> sem data definida
+    - "24h 43m 14s"                  -> contagem regressiva final (últimas horas)
+    Retorna string formatada 'DD/MM/AAAA' ou None se não houver prazo aplicável.
+    """
+    if not text:
+        return None
+    text = text.strip()
+
+    if 'em breve' in text.lower():
+        return None
+
+    # "Faltam N dias"
+    m = re.search(r'faltam\s+(\d+)\s+dias?', text, re.IGNORECASE)
+    if m:
+        dias = int(m.group(1))
+        return (datetime.now() + timedelta(days=dias)).strftime('%d/%m/%Y')
+
+    # "Lançamento em Xd Yh Zm" (projeto ainda não lançado — usamos como data de lançamento)
+    m = re.search(r'(\d+)d\s+(\d+)h\s+(\d+)m', text)
+    if m:
+        dias = int(m.group(1))
+        return (datetime.now() + timedelta(days=dias)).strftime('%d/%m/%Y')
+
+    # Contagem regressiva pura "24h 43m 14s" -> últimas horas da campanha
+    m = re.search(r'^(\d+)h\s+(\d+)m\s+(\d+)s$', text)
+    if m:
+        return datetime.now().strftime('%d/%m/%Y')
+
+    return None
+
+
 def scrape_catarse(days_window: int = 2) -> list:
     """
-    Coleta projetos de jogos de tabuleiro do Catarse via Selenium.
-    Tenta múltiplos padrões de link pois o layout do SPA muda com frequência.
-    """
-    url = ("https://www.catarse.me/explore"
-           "?ref=home_projects_we_love&mode=not_sub&category_id=14&filter=recent")
-    print(f"Coletando projetos Catarse ({url})...")
-    projects = []
+    Coleta projetos da categoria Jogos no novo Catarse (catarse.com.br).
+    O site é um SPA Next.js; a listagem de cards é renderizada client-side,
+    por isso o Selenium é obrigatório (requests simples não basta).
 
-    html = _selenium_get(url, wait_seconds=10)
+    Cada card de projeto é identificado pelo padrão de link
+    '?ref=ctrse_..._project_card' — muito mais estável que adivinhar
+    containers genéricos, já que a página também tem cards de criador,
+    banners e links de categoria com estrutura parecida.
+    """
+    url = "https://www.catarse.com.br/discovery?category=2&filterBy=recent"
+    print(f"Coletando projetos Catarse ({url})...")
+
+    html = _selenium_get(
+        url, wait_seconds=10,
+        wait_for_selector='a[href*="ctrse_"]'
+    )
     if not html:
         print("   -> Selenium indisponível. Catarse ignorado.")
         return []
 
     soup = BeautifulSoup(html, 'html.parser')
-    all_links = soup.find_all('a', href=True)
-    print(f"   -> {len(all_links)} links na página.")
 
-    CATARSE_NAV = {
-        'explore', 'login', 'start', 'pt', 'en', 'es',
-        'about', 'terms', 'privacy', 'faq', 'blog', 'heroes',
-    }
+    project_links = [
+        a for a in soup.find_all('a', href=True)
+        if 'ref=ctrse_' in a['href'] and '_project_card' in a['href']
+    ]
+    print(f"   -> {len(project_links)} link(s) de card de projeto na página.")
 
-    seen = set()
-    for a in all_links:
-        href = a.get('href', '').strip()
-        if not href:
+    seen_slugs = set()
+    projects = []
+
+    for a in project_links:
+        href = a['href'].strip()
+        href_full = href if href.startswith('http') else f"https://www.catarse.com.br{href}"
+        slug = href_full.split('catarse.com.br/')[-1].split('?')[0].strip('/')
+
+        if not slug or slug in seen_slugs:
             continue
+        seen_slugs.add(slug)
 
-        if href.startswith('/'):
-            href_full = 'https://www.catarse.me' + href
-        elif href.startswith('http') and 'catarse.me' in href:
-            href_full = href
-        else:
-            continue
-
-        path = href_full.split('catarse.me/')[-1].split('?')[0].split('/')[0]
-        if not path or path in CATARSE_NAV or path in seen:
-            continue
-        if 'filter=' in href or 'city_name=' in href or 'category_id=' in href:
-            continue
-        if href_full in seen:
-            continue
-
-        seen.add(href_full)
-        seen.add(path)
-
+        # Sobe até o container do card: ancestral mais próximo que tenha
+        # tanto uma <img> quanto um <h3> (título do card em destaque).
         container = a
         for _ in range(6):
             parent = container.parent
-            if parent is None or parent.name in ['body', 'html']:
-                break
-            if parent.find('img'):
-                container = parent
+            if parent is None or parent.name in ('body', 'html'):
                 break
             container = parent
-
-        name_tag = container.find(['h1', 'h2', 'h3', 'h4', 'p', 'span'])
-        name = name_tag.get_text(strip=True) if name_tag else a.get_text(strip=True)
-        if not name or len(name) < 3:
-            continue
-
-        img_tag = container.find('img')
-        image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
-
-        desc_tags = container.find_all(['p', 'span'])
-        description = ' '.join(
-            t.get_text(strip=True) for t in desc_tags
-            if t.get_text(strip=True) and t.get_text(strip=True) != name
-        )[:200] or name
-
-        end_date = None
-        for tag in container.find_all(['span', 'p', 'div', 'time']):
-            raw = tag.get('datetime', '') or tag.get_text(strip=True)
-            parsed = _parse_br_date(raw)
-            if parsed and parsed >= datetime.now().date():
-                end_date = parsed
+            if container.find('img') and container.find(['h2', 'h3']):
                 break
 
-        print(f"   -> Projeto: '{name}'")
+        title_tag = container.find(['h2', 'h3'])
+        name = title_tag.get_text(strip=True) if title_tag else a.get_text(strip=True)
+        if not name or len(name) < 2:
+            continue
+
+        # Remove o badge de "+18" e contagem de seguidores que por vezes
+        # se mistura ao texto do link âncora (ex: "Triangle Agency RPGAvatar...338 seguidores")
+        name = re.sub(r'(Avatar)+\d*\s*seguidores$', '', name).strip()
+        name = re.sub(r'^\+\d+\s*', '', name).strip()
+
+        img_tag = container.find('img')
+        image = (img_tag.get('src') or img_tag.get('data-src', '')) if img_tag else ''
+
+        # Categoria do projeto: texto puro logo após o nome do criador,
+        # geralmente a última linha de texto curta do card (ex: "Jogos").
+        card_lines = [
+            t for t in container.stripped_strings
+            if t and t != name
+        ]
+        category = card_lines[-1] if card_lines else ''
+
+        if category and category.lower() != 'jogos':
+            # Card fora da categoria Jogos (ex: lixo de seção cruzada) — ignora.
+            continue
+
+        # Prazo/status: procura o texto que contenha 'Faltam', 'Lançamento' ou contagem regressiva
+        deadline_text = ''
+        for t in card_lines:
+            if re.search(r'faltam|lançamento|^\d+h\s+\d+m\s+\d+s$', t, re.IGNORECASE):
+                deadline_text = t
+                break
+
+        end_date = _parse_catarse_deadline(deadline_text)
+
+        # Descrição curta: nome do criador. Exclui categoria, prazo e o badge
+        # de percentual de financiamento (ex: "207%"), que também aparece como
+        # texto solto no card e não deve ser confundido com o nome do criador.
+        is_percent_badge = re.compile(r'^\d+%$')
+        description = next(
+            (t for t in card_lines
+             if t not in (category, deadline_text) and not is_percent_badge.match(t)),
+            name
+        )
+
+        print(f"   -> Projeto: '{name}' [{category or 'sem categoria'}]")
         projects.append({
             'name':        name,
             'link':        href_full,
             'description': description,
             'image':       image,
-            'end_date':    end_date.strftime('%d/%m/%Y') if end_date else 'A confirmar',
+            'end_date':    end_date or 'A confirmar',
             'platform':    'catarse',
         })
 

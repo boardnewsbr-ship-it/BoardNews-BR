@@ -248,3 +248,71 @@ def generate_summary(game_name: str, contextual_info: str = "") -> str:
         return summary
         
     return f"Descubra a proposta de gameplay e o tema envolvente de {game_name}. Um título de destaque no cenário dos jogos de tabuleiro que promete desafiar suas estratégias."
+
+
+# Palavras-chave usadas como fallback quando a Groq estiver indisponível.
+# Propositalmente restritas a sinais fortes de jogo DIGITAL/videogame —
+# RPG de mesa, card game e livro de regras NÃO entram aqui, pois fazem
+# parte do escopo aceito da categoria "Jogos" do Catarse.
+_DIGITAL_GAME_NEGATIVE_KEYWORDS = [
+    'videogame', 'video game', 'jogo digital', 'jogo eletrônico',
+    'steam', 'playstation', 'xbox', 'nintendo switch', 'mobile game',
+    'app gratuito', 'app mobile', 'pc gamer', 'console', 'demo gameplay',
+    'unreal engine', 'unity engine', 'indie game digital',
+    'play store', 'google play', 'app store', 'android', 'ios',
+    'aplicativo mobile', 'jogue no celular', 'jogo para celular',
+    'disponível na loja', 'baixe o app', 'baixar o jogo',
+]
+
+
+def is_board_game_project(name: str, description: str = "") -> bool:
+    """
+    Classifica um projeto do Catarse como jogo de tabuleiro/RPG físico (True)
+    ou jogo digital/videogame (False), para excluir apenas itens digitais
+    dos resultados do Catarse (que mistura tabuleiro e digital na categoria
+    "Jogos"). RPG de mesa e card games são considerados válidos (True).
+
+    Em caso de falha da API ou resposta ambígua, o fallback é permissivo
+    (assume jogo de tabuleiro válido) para evitar excluir projetos legítimos
+    por excesso de cautela — só exclui quando há sinal claro de "digital".
+    """
+    text_lower = f"{name} {description}".lower()
+
+    if not get_api_key():
+        # Fallback por palavras-chave negativas quando a IA não está disponível.
+        is_digital = any(kw in text_lower for kw in _DIGITAL_GAME_NEGATIVE_KEYWORDS)
+        return not is_digital
+
+    prompt = f"""
+    Você é um classificador especialista em financiamento coletivo de jogos.
+    Analise o projeto abaixo, do Catarse, e decida se ele é um JOGO DE TABULEIRO
+    (ou RPG de mesa, card game físico, livro de regras impresso) ou um JOGO DIGITAL
+    (videogame, app, jogo para PC/console/celular).
+
+    Regras:
+    - RPG de mesa, card game físico e livros de regras impressos contam como
+      "jogo de tabuleiro" (board_game = true).
+    - Apenas jogos eletrônicos/digitais (videogame, app, software jogável em
+      tela) contam como "jogo digital" (board_game = false).
+    - Em caso de dúvida real (informação insuficiente), responda board_game = true.
+
+    Nome do projeto: "{name}"
+    Descrição disponível: "{description}"
+
+    Responda APENAS um objeto JSON válido no formato:
+    {{
+      "board_game": true ou false
+    }}
+    """
+
+    try:
+        res_text = call_groq(prompt, response_json=True)
+        if res_text:
+            data = json.loads(res_text)
+            return bool(data.get("board_game", True))
+    except Exception as e:
+        print(f"Erro ao classificar projeto '{name}' via Groq: {e}")
+
+    # Fallback final: permissivo, igual ao caminho sem API key.
+    is_digital = any(kw in text_lower for kw in _DIGITAL_GAME_NEGATIVE_KEYWORDS)
+    return not is_digital
