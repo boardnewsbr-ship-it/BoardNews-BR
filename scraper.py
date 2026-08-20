@@ -695,13 +695,28 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
     # A partir da reestruturação do site (~jul/2026), os links de produto
     # deixaram de terminar em ".html" (ex: "fromage.html" -> "fromage").
     # Normalizamos removendo ".html" quando presente, para funcionar com
-    # ambos os formatos (novo e antigo, caso o site volte atrás).
+    # ambos os formatos (novo e antigo, caso o site volte atrás). Também
+    # aceitamos tanto href relativo ("/fromage") quanto absoluto
+    # ("https://www.playeasy.com.br/fromage"), pois não há garantia de
+    # qual formato o site usa em cada seção.
+    all_hrefs = [a.get('href', '').strip() for a in soup.find_all('a', href=True)]
+
+    def _to_path(href: str) -> str | None:
+        for prefix in ('https://www.playeasy.com.br', 'http://www.playeasy.com.br',
+                       'https://playeasy.com.br', 'http://playeasy.com.br'):
+            if href.startswith(prefix):
+                return href[len(prefix):] or '/'
+        if href.startswith('/'):
+            return href
+        return None
+
     product_map = {}
     for a in soup.find_all('a', href=True):
         href = a.get('href', '').strip()
-        if not href.startswith('/'):
+        path = _to_path(href)
+        if path is None:
             continue
-        path = href.split('?')[0].rstrip('/')
+        path = path.split('?')[0].rstrip('/')
         if path.endswith('.html'):
             path = path[:-5]
         slug = path.lstrip('/')
@@ -714,7 +729,11 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
         product_map[slug]['tags'].append(a)
 
     if not product_map:
-        print(f"   -> Nenhum link de produto encontrado.")
+        print(f"   -> Nenhum link de produto encontrado. "
+              f"({len(all_hrefs)} <a href> no total na página)")
+        if all_hrefs:
+            amostra = all_hrefs[:8]
+            print(f"   -> Amostra de hrefs encontrados: {amostra}")
         return []
 
     print(f"   -> {len(product_map)} produto(s) únicos encontrados.")
