@@ -665,7 +665,7 @@ def scrape_playeasy_product_description(url: str, driver=None) -> str | None:
 def _parse_playeasy_products(html: str, mode: str) -> list:
     """
     Extrai produtos do HTML da PlayEasy renderizado pelo Selenium.
-    O site usa links relativos (ex: /et-de-varginha.html) e Tailwind CSS.
+    O site usa links relativos (ex: /et-de-varginha) e Tailwind CSS.
 
     Estratégia:
     - Agrupa todos os <a> com mesmo href em product_map
@@ -682,19 +682,35 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
         'promocoes', 'vitrine', 'customer', 'wishlist',
         'cart', 'checkout', 'busca', 'search', 'login', 'conta',
         'institutional', 'contato', 'sobre', 'faq',
+        # Slugs adicionais confirmados na reestruturação de URLs da PlayEasy
+        # (site migrou de /pagina.html para /pagina, sem extensão) — ver PDR.
+        'pre-venda', 'desconto-relampago', 'lancamentos-doff',
+        'vitrine-inicial', 'my-account', 'cadastro', 'central-do-cliente',
+        'empresa', 'como-comprar', 'entrega', 'sacdefeito',
+        'trocas-e-devolucoes', 'reposicao-de-pecas-e-componentes',
+        'privacidade',
     }
 
-    # Agrupa <a> por slug de produto
+    # Agrupa <a> por slug de produto.
+    # A partir da reestruturação do site (~jul/2026), os links de produto
+    # deixaram de terminar em ".html" (ex: "fromage.html" -> "fromage").
+    # Normalizamos removendo ".html" quando presente, para funcionar com
+    # ambos os formatos (novo e antigo, caso o site volte atrás).
     product_map = {}
     for a in soup.find_all('a', href=True):
         href = a.get('href', '').strip()
-        if not href.endswith('.html') or not href.startswith('/'):
+        if not href.startswith('/'):
             continue
-        slug = href.lstrip('/').split('.')[0].split('?')[0]
-        if not slug or any(nav == slug for nav in NAV_SLUGS):
+        path = href.split('?')[0].rstrip('/')
+        if path.endswith('.html'):
+            path = path[:-5]
+        slug = path.lstrip('/')
+        # Só aceita slugs de 1 nível (produtos ficam na raiz do domínio).
+        # Links com "/" no meio são categorias/subcategorias (ex: editoras/asmodee).
+        if not slug or '/' in slug or slug in NAV_SLUGS:
             continue
         if slug not in product_map:
-            product_map[slug] = {'href': href, 'tags': []}
+            product_map[slug] = {'href': '/' + slug, 'tags': []}
         product_map[slug]['tags'].append(a)
 
     if not product_map:
@@ -717,16 +733,42 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
                     break
 
         # 2. Nome — extrai apenas o nome do jogo, sem editora nem descrição
-        SKIP_PATTERNS = ('r$', '%', 'off', 'pré-venda', 'add ao', 'carrinho',
-                         'à vista', 'ou em', 'pixou', 'preorderconsentrequired')
+        #
+        # Estratégia primária: atributo "alt" da imagem do produto. Desde a
+        # reestruturação do site (~jul/2026), o link de texto passou a vir
+        # com nome E preço concatenados no mesmo <a> (ex: "Coup: Promo Pack
+        # #3 R$ 19,90 R$ 17,90 -10% OFF à vista..."), então o filtro por
+        # SKIP_PATTERNS abaixo descarta esse link inteiro. O "alt" da <img>
+        # continua limpo e é a fonte mais confiável.
         raw_name = ''
         for a in tags:
-            t = a.get_text(strip=True)
-            tl = t.lower()
-            if not t or any(p in tl for p in SKIP_PATTERNS):
-                continue
-            if len(t) > len(raw_name):
-                raw_name = t
+            img = a.find('img')
+            if img:
+                alt = (img.get('alt') or '').strip()
+                if alt and len(alt) > len(raw_name):
+                    raw_name = alt
+
+        # Fallback 1: filtra links de texto que não contenham preço/ruído.
+        SKIP_PATTERNS = ('r$', '%', 'off', 'pré-venda', 'add ao', 'carrinho',
+                         'à vista', 'ou em', 'pixou', 'preorderconsentrequired')
+        if not raw_name:
+            for a in tags:
+                t = a.get_text(strip=True)
+                tl = t.lower()
+                if not t or any(p in tl for p in SKIP_PATTERNS):
+                    continue
+                if len(t) > len(raw_name):
+                    raw_name = t
+
+        # Fallback 2: nome e preço vieram grudados no mesmo link — corta
+        # tudo a partir do primeiro "R$".
+        if not raw_name:
+            for a in tags:
+                t = a.get_text(strip=True)
+                if 'r$' in t.lower():
+                    candidate = re.split(r'R\$', t, flags=re.IGNORECASE)[0].strip()
+                    if candidate and len(candidate) > len(raw_name):
+                        raw_name = candidate
 
         # Corta o nome no ponto onde o texto da editora começa colado SEM ESPAÇO
         # Ex: "ET de VarginhaBoard Game" → "ET de Varginha" (corta em "a" + "B")
@@ -810,7 +852,9 @@ def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
     Raspa os produtos em pré-venda da PlayEasy via Selenium.
     Reutiliza um único driver Chrome para todas as páginas.
     """
-    base_url = "https://www.playeasy.com.br/vitrine/pre-venda.html"
+    # A PlayEasy migrou de /vitrine/pre-venda.html para /pre-venda (sem
+    # extensão .html) e trocou o parâmetro de paginação de ?page= para ?pg=.
+    base_url = "https://www.playeasy.com.br/pre-venda"
     results = []
     driver = _get_selenium_driver()
     if not driver:
@@ -819,7 +863,7 @@ def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
 
     try:
         for page in range(1, max_pages + 1):
-            url = f"{base_url}?page={page}" if page > 1 else base_url
+            url = f"{base_url}?pg={page}" if page > 1 else base_url
             print(f"Raspando pré-vendas: {url}")
             try:
                 driver.get(url)
@@ -852,7 +896,9 @@ def scrape_playeasy_promotions(max_pages: int = 20) -> list:
     Reutiliza um único driver Chrome para todas as páginas (mais eficiente).
     Retorna apenas itens COM desconto real (price_from > price_to).
     """
-    base_url = "https://www.playeasy.com.br/promocoes.html"
+    # A PlayEasy migrou de /promocoes.html para /promocoes (sem extensão
+    # .html) e trocou o parâmetro de paginação de ?page= para ?pg=.
+    base_url = "https://www.playeasy.com.br/promocoes"
     results = []
     driver = _get_selenium_driver()
     if not driver:
@@ -861,7 +907,7 @@ def scrape_playeasy_promotions(max_pages: int = 20) -> list:
 
     try:
         for page in range(1, max_pages + 1):
-            url = f"{base_url}?page={page}" if page > 1 else base_url
+            url = f"{base_url}?pg={page}" if page > 1 else base_url
             print(f"Raspando promoções: {url}")
             try:
                 driver.get(url)
