@@ -19,7 +19,9 @@ _BGG_TOKEN_VALUE   = None   # None = sem token = BGG desabilitado
 
 def _check_bgg_token() -> str | None:
     """
-    Retorna o token BGG configurado, ou None se não houver.
+    Retorna o token BGG configurado, ou None se não houver (ou se
+    settings.use_bgg=false no config.json, que desliga o BGG mesmo que
+    um token esteja configurado).
     Quando retorna None, todas as chamadas ao BGG são ignoradas silenciosamente.
     Imprime aviso apenas na primeira verificação.
     """
@@ -29,6 +31,20 @@ def _check_bgg_token() -> str | None:
         return _BGG_TOKEN_VALUE
 
     _BGG_TOKEN_CHECKED = True
+
+    use_bgg = True
+    try:
+        if os.path.exists('config.json'):
+            with open('config.json', 'r', encoding='utf-8') as f:
+                use_bgg = bool(json.load(f).get('settings', {}).get('use_bgg', True))
+    except Exception:
+        use_bgg = True
+
+    if not use_bgg:
+        _BGG_TOKEN_VALUE = None
+        print("BGG: use_bgg=false em config.json — enriquecimento desabilitado.")
+        return None
+
     token = os.environ.get("BGG_API_TOKEN", "").strip()
 
     if not token:
