@@ -12,6 +12,90 @@ def format_price(value: float) -> str:
         return "R$ --"
     return f"R$ {value:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.')
 
+
+def _plural(n: int, singular: str, plural: str) -> str:
+    return f"{n} {singular if n == 1 else plural}"
+
+
+def _truncate(text: str, max_len: int = 40) -> str:
+    text = (text or "").strip()
+    if len(text) <= max_len:
+        return text
+    return text[:max_len - 3].rstrip() + "..."
+
+
+def build_subject(news_list: list, pre_sales: list, promotions: list,
+                   crowdfunding: list = None) -> str:
+    """
+    Monta um assunto dinâmico para o e-mail, priorizando o conteúdo mais
+    chamativo do dia:
+      1. Se há promoções, destaca a de maior desconto.
+      2. Senão, se há pré-vendas, destaca a primeira.
+      3. Senão, resume só as contagens (notícias / financiamentos).
+      4. Sem nenhum conteúdo, cai no assunto genérico com a data
+         (main.py já não envia e-mail nesse caso, mas mantemos o fallback
+         por segurança caso a função seja chamada de outro lugar).
+
+    Sempre soma um resumo das outras categorias com conteúdo, para dar
+    uma ideia completa do que tem no e-mail sem precisar abrir.
+    """
+    if crowdfunding is None:
+        crowdfunding = []
+
+    def extras(skip: set) -> str:
+        bits = []
+        if 'news' not in skip and news_list:
+            bits.append(_plural(len(news_list), 'notícia', 'notícias'))
+        if 'pre_sales' not in skip and pre_sales:
+            bits.append(_plural(len(pre_sales), 'pré-venda', 'pré-vendas'))
+        if 'promotions' not in skip and promotions:
+            bits.append(_plural(len(promotions), 'promoção', 'promoções'))
+        if 'crowdfunding' not in skip and crowdfunding:
+            bits.append(_plural(len(crowdfunding), 'financiamento', 'financiamentos'))
+        return " · ".join(bits)
+
+    # 1. Promoções — destaca a de maior desconto
+    if promotions:
+        best = max(promotions, key=lambda p: p.get('discount', 0))
+        name = _truncate(best.get('name', ''))
+        discount = best.get('discount', 0)
+        others = len(promotions) - 1
+
+        headline = f"{name} -{discount}% OFF"
+        if others > 0:
+            headline += f" e mais {_plural(others, 'oferta', 'ofertas')}"
+
+        subject = f"BoardNews BR 🎲 • {headline}"
+        rest = extras(skip={'promotions'})
+        if rest:
+            subject += f" · {rest}"
+        return subject[:150]
+
+    # 2. Sem promoções, mas com pré-vendas — destaca a primeira
+    if pre_sales:
+        name = _truncate(pre_sales[0].get('name', ''))
+        others = len(pre_sales) - 1
+
+        headline = f"Pré-venda: {name}"
+        if others > 0:
+            headline += f" e mais {others}"
+
+        subject = f"BoardNews BR 🎲 • {headline}"
+        rest = extras(skip={'pre_sales'})
+        if rest:
+            subject += f" · {rest}"
+        return subject[:150]
+
+    # 3. Só notícias e/ou financiamentos — resume as contagens
+    rest = extras(skip=set())
+    if rest:
+        return f"BoardNews BR 🎲 • {rest}"[:150]
+
+    # 4. Fallback — sem conteúdo (não deveria chegar aqui em uso normal)
+    current_date = datetime.now().strftime("%d/%m/%Y")
+    return f"BoardNews BR 🎲 • {current_date}"
+
+
 def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
                         crowdfunding: list = None) -> str:
     """
