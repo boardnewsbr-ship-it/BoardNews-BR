@@ -206,9 +206,14 @@ def run():
         processed_news, processed_pre_sales,
         processed_promotions, processed_crowdfunding
     )
+    subject = email_sender.build_subject(
+        processed_news, processed_pre_sales,
+        processed_promotions, processed_crowdfunding
+    )
+    print(f"Assunto: {subject}")
 
     print("Enviando e-mail...")
-    email_sender.send_email(receiver_email, html_content)
+    email_sender.send_email(receiver_email, html_content, subject=subject)
     print("Fluxo finalizado com sucesso!")
 
 if __name__ == '__main__':
