@@ -5,6 +5,8 @@
   },
   "settings": {
     "dry_run": false,
+    "use_ai": false,
+    "use_bgg": true,
     "request_timeout_seconds": 15,
     "max_pre_sale_pages": 2,
     "max_promo_pages": 20,
