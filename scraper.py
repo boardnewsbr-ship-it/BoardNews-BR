@@ -607,15 +607,21 @@ def scrape_playeasy_product_description(url: str, driver=None) -> str | None:
     Recebe um driver Selenium já aberto para reutilização (mais eficiente).
     Se driver=None, abre e fecha um driver próprio.
 
-    Estratégia (confirmada via inspeção real do HTML da PlayEasy):
-    1. div.prose — classe do Tailwind Typography usada especificamente
-       para o bloco de texto rico da descrição do produto.
-    2. Fallback estrutural: localiza o <h2>Descrição</h2> e pega a
-       <div> imediatamente seguinte — resiliente a mudanças de classes
-       CSS geradas por build (comum em apps Next.js/React).
+    Estratégia (confirmada via inspeção real do HTML da PlayEasy, ago/2026):
+    1. id="descricao" — a página usa abas por âncora (o link da aba é
+       <a href="#descricao">Descrição Geral</a>) e o conteúdo já vem no
+       HTML dentro de um elemento com esse id, só fica visualmente
+       escondido até o clique. Não depende de nome de classe CSS, que
+       muda a cada redesign do site — é a estratégia mais robusta.
+    2. div.prose — classe do Tailwind Typography, formato usado antes da
+       reestruturação do site. Mantido como fallback.
+    3. Heading (h2/h3) cujo texto comece com "descri" (cobre tanto
+       "Descrição" quanto "Descrição Geral") + <div> ou <p> seguinte.
+    4. Segue o href="#algumId" do link da aba de descrição, seja qual for
+       o id, e pega o texto do elemento correspondente.
 
-    Não há fallback genérico nem geração por IA: se nenhuma das duas
-    estratégias encontrar o texto, retorna None.
+    Não há fallback genérico nem geração por IA: se nenhuma estratégia
+    encontrar o texto, retorna None.
     """
     own_driver = False
     if driver is None:
@@ -640,7 +646,15 @@ def scrape_playeasy_product_description(url: str, driver=None) -> str | None:
 
     soup = BeautifulSoup(html, 'html.parser')
 
-    # 1. Seletor direto — div.prose (Tailwind Typography)
+    # 1. id="descricao" — confirmado via inspeção real (ago/2026)
+    tag = soup.find(id='descricao')
+    if tag:
+        text = tag.get_text(separator=' ', strip=True)
+        if len(text) > 20:
+            print(f"   -> Descrição encontrada via id='descricao'")
+            return text[:800]
+
+    # 2. Seletor direto — div.prose (Tailwind Typography, formato antigo)
     tag = soup.select_one('div.prose')
     if tag:
         text = tag.get_text(separator=' ', strip=True)
@@ -648,17 +662,30 @@ def scrape_playeasy_product_description(url: str, driver=None) -> str | None:
             print(f"   -> Descrição encontrada via 'div.prose'")
             return text[:800]
 
-    # 2. Fallback estrutural — <h2>Descrição</h2> + <div> seguinte
-    for h2 in soup.find_all('h2'):
-        if h2.get_text(strip=True).lower() == 'descrição':
-            sibling = h2.find_next_sibling('div')
+    # 3. Fallback estrutural — heading que comece com "descri" (cobre
+    # "Descrição" e "Descrição Geral") + div/p seguinte
+    for heading in soup.find_all(['h2', 'h3']):
+        heading_text = heading.get_text(strip=True).lower()
+        if heading_text.startswith('descri'):
+            sibling = heading.find_next_sibling(['div', 'p'])
             if sibling:
                 text = sibling.get_text(separator=' ', strip=True)
                 if len(text) > 20:
-                    print(f"   -> Descrição encontrada via <h2>Descrição</h2> + div seguinte")
+                    print(f"   -> Descrição encontrada via heading '{heading.get_text(strip=True)}'")
                     return text[:800]
 
-    print(f"   -> Descrição não encontrada em {url} (nenhuma das 2 estratégias funcionou).")
+    # 4. Último recurso — segue o href="#id" do link da aba de descrição
+    tab_link = soup.find('a', href=re.compile(r'#descri', re.IGNORECASE))
+    if tab_link:
+        target_id = tab_link.get('href', '').lstrip('#')
+        tag = soup.find(id=target_id) if target_id else None
+        if tag:
+            text = tag.get_text(separator=' ', strip=True)
+            if len(text) > 20:
+                print(f"   -> Descrição encontrada via link de aba (#{target_id})")
+                return text[:800]
+
+    print(f"   -> Descrição não encontrada em {url} (nenhuma estratégia funcionou).")
     return None
 
 
