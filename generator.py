@@ -9,8 +9,40 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 # Controle preventivo de cota (Limites generosos do Groq, mas mantendo intervalo seguro de 1.5s)
 _LAST_CALL_TIME = 0.0
 
+_USE_AI_CHECKED = False
+_USE_AI_VALUE = True
+
+
+def _use_ai() -> bool:
+    """
+    Lê settings.use_ai do config.json. Default True (comportamento antigo)
+    se a chave não existir, para não quebrar quem já usa o projeto.
+    Quando False, get_api_key() retorna vazio direto — nenhuma chamada à
+    Groq é feita (nem as 3 tentativas com backoff), e todas as funções
+    deste módulo caem direto no fallback sem IA.
+    """
+    global _USE_AI_CHECKED, _USE_AI_VALUE
+    if _USE_AI_CHECKED:
+        return _USE_AI_VALUE
+    _USE_AI_CHECKED = True
+    try:
+        if os.path.exists('config.json'):
+            with open('config.json', 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+                _USE_AI_VALUE = bool(cfg.get('settings', {}).get('use_ai', True))
+    except Exception:
+        _USE_AI_VALUE = True
+    if not _USE_AI_VALUE:
+        print("Groq: use_ai=false em config.json — geração por IA desabilitada, usando fallbacks.")
+    return _USE_AI_VALUE
+
+
 def get_api_key() -> str:
-    """Obtém a API Key da Groq a partir das variáveis de ambiente."""
+    """Obtém a API Key da Groq a partir das variáveis de ambiente.
+    Retorna vazio (desligando a IA) se settings.use_ai=false no config.json.
+    """
+    if not _use_ai():
+        return ""
     return os.environ.get("GROQ_API_KEY", "")
 
 def call_groq(prompt: str, response_json: bool = False) -> str:
