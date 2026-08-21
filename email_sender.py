@@ -24,6 +24,49 @@ def _truncate(text: str, max_len: int = 40) -> str:
     return text[:max_len - 3].rstrip() + "..."
 
 
+_WEEKDAYS_PT = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira',
+                'Sexta-feira', 'Sábado', 'Domingo']
+_MONTHS_PT = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+              'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+
+
+def _formatted_date_pt(dt: datetime) -> str:
+    """Ex: 'QUINTA-FEIRA, 20 DE AGOSTO DE 2026'. Não depende de locale do
+    sistema (que costuma faltar em runners do GitHub Actions)."""
+    weekday = _WEEKDAYS_PT[dt.weekday()]
+    return f"{weekday}, {dt.day} de {_MONTHS_PT[dt.month]} de {dt.year}".upper()
+
+
+def _join_natural(items: list) -> str:
+    """Junta itens com vírgula e 'e' antes do último, no estilo natural
+    do português (ex: 'A, B e C')."""
+    items = [i for i in items if i]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " e " + items[-1]
+
+
+def _build_intro_summary(news_list: list, pre_sales: list, promotions: list,
+                          crowdfunding: list) -> str:
+    """Frase de abertura dinâmica resumindo o conteúdo do dia, no espírito
+    de newsletters como a The News."""
+    bits = []
+    if news_list:
+        bits.append(_plural(len(news_list), 'notícia', 'notícias'))
+    if pre_sales:
+        bits.append(_plural(len(pre_sales), 'pré-venda', 'pré-vendas'))
+    if promotions:
+        bits.append(_plural(len(promotions), 'promoção', 'promoções'))
+    if crowdfunding:
+        bits.append(_plural(len(crowdfunding), 'financiamento coletivo',
+                             'financiamentos coletivos'))
+    if not bits:
+        return "Um dia tranquilo no universo dos jogos de tabuleiro."
+    return f"Hoje tem {_join_natural(bits)} esperando por você."
+
+
 def build_subject(news_list: list, pre_sales: list, promotions: list,
                    crowdfunding: list = None) -> str:
     """
@@ -104,8 +147,10 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
     """
     if crowdfunding is None:
         crowdfunding = []
-    current_date = datetime.now().strftime("%d/%m/%Y")
-    
+    now = datetime.now()
+    formatted_date = _formatted_date_pt(now)
+    intro_summary = _build_intro_summary(news_list, pre_sales, promotions, crowdfunding)
+
     # 1. Cabeçalho do E-mail
     html = f"""
     <!DOCTYPE html>
@@ -131,25 +176,63 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
                 padding: 24px;
             }}
             .header {{
+                background-color: #4c3fa8;
+                background-image: linear-gradient(135deg, #4c3fa8 0%, #7c3aed 55%, #db2777 100%);
+                border-radius: 18px;
+                padding: 32px 24px 26px 24px;
                 text-align: center;
-                border-bottom: 3px double #1a202c;
-                padding-bottom: 16px;
                 margin-bottom: 24px;
+            }}
+            .header-badge {{
+                display: inline-block;
+                width: 52px;
+                height: 52px;
+                line-height: 52px;
+                background-color: #ffffff;
+                border-radius: 50%;
+                font-size: 26px;
+                margin-bottom: 14px;
             }}
             .header h1 {{
                 font-family: "Londrina Solid", "Impact", -apple-system, sans-serif;
-                font-size: 32px;
+                font-size: 30px;
                 font-weight: 900;
                 letter-spacing: 1px;
-                margin: 0 0 4px 0;
+                margin: 0 0 6px 0;
                 text-transform: uppercase;
-                color: #1a202c;
+                color: #ffffff;
             }}
-            .header .date {{
+            .header .tagline {{
                 font-size: 14px;
-                color: #718096;
+                color: rgba(255, 255, 255, 0.88);
+                margin: 0 0 20px 0;
+            }}
+            .header .date-pill {{
+                display: inline-block;
+                background-color: rgba(255, 255, 255, 0.16);
+                border: 1px solid rgba(255, 255, 255, 0.45);
+                color: #ffffff;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 1.5px;
                 text-transform: uppercase;
-                letter-spacing: 2px;
+                padding: 6px 16px;
+                border-radius: 999px;
+            }}
+            .intro {{
+                text-align: center;
+                margin-bottom: 28px;
+            }}
+            .intro-summary {{
+                font-size: 16px;
+                line-height: 1.5;
+                color: #2d3748;
+                margin: 0 0 16px 0;
+            }}
+            .dotted-divider {{
+                letter-spacing: 8px;
+                color: #cbd5e0;
+                font-size: 14px;
                 margin: 0;
             }}
             .section {{
@@ -244,8 +327,14 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
     <body>
         <div class="container">
             <div class="header">
+                <div class="header-badge">🎲</div>
                 <h1>BoardNews BR</h1>
-                <p class="date">Notícias & Ofertas • {current_date}</p>
+                <p class="tagline">Sua dose diária do universo dos jogos de tabuleiro</p>
+                <span class="date-pill">{formatted_date}</span>
+            </div>
+            <div class="intro">
+                <p class="intro-summary">{intro_summary}</p>
+                <p class="dotted-divider">• • • • •</p>
             </div>
     """
     
