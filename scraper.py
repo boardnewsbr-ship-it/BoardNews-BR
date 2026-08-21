@@ -15,6 +15,30 @@ HEADERS = {
                   '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
+
+def _extract_img_url(img_tag) -> str:
+    """
+    Extrai a URL real de uma <img>, priorizando atributos de lazy-loading
+    (data-src, data-lazy-src, etc). Sites com carregamento preguiçoso de
+    imagem deixam o "src" como um placeholder (base64 em branco, ou vazio)
+    até o elemento entrar na tela — como o scraper nunca rola/espera cada
+    imagem individualmente, produtos "abaixo da dobra" no HTML capturado
+    ficavam sem foto se a gente lesse só o "src". Por isso os atributos de
+    lazy-load são checados primeiro.
+    """
+    if not img_tag:
+        return ''
+    for attr in ('data-src', 'data-lazy-src', 'data-original', 'data-lazy', 'data-image'):
+        val = (img_tag.get(attr) or '').strip()
+        if val and not val.startswith('data:'):
+            return val
+    src = (img_tag.get('src') or '').strip()
+    if src and not src.startswith('data:'):
+        return src
+    # Último recurso: retorna o que tiver (mesmo vazio ou base64), melhor
+    # do que travar — o e-mail já trata ausência de imagem graciosamente.
+    return src
+
 # URL do proxy Cloudflare Workers — configurada via variável de ambiente ou config.json
 # O proxy contorna bloqueios de IP de datacenter em sites como Catarse e Meeple Starter.
 _PROXY_URL = None
@@ -224,7 +248,7 @@ def scrape_ludonews(days_window: int = 2) -> list:
 
             # Imagem do card
             img_tag = card.select_one('img')
-            image = img_tag.get('src', '') if img_tag else ''
+            image = _extract_img_url(img_tag)
 
             news_items.append({
                 'title': title,
@@ -412,7 +436,7 @@ def scrape_catarse(days_window: int = 2) -> list:
         name = re.sub(r'^\+\d+\s*', '', name).strip()
 
         img_tag = container.find('img')
-        image = (img_tag.get('src') or img_tag.get('data-src', '')) if img_tag else ''
+        image = _extract_img_url(img_tag)
 
         # Categoria do projeto: texto puro logo após o nome do criador,
         # geralmente a última linha de texto curta do card (ex: "Jogos").
@@ -561,7 +585,7 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
             continue
 
         img_tag = container.find('img')
-        image = img_tag.get('src', img_tag.get('data-src', '')) if img_tag else ''
+        image = _extract_img_url(img_tag) if img_tag else ''
 
         end_date   = None
         start_date = None
@@ -769,12 +793,12 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
         tags = data['tags']
         full_url = 'https://www.playeasy.com.br' + data['href']
 
-        # 1. Imagem — primeiro <a> do grupo que contém <img>
+        # 1. Imagem — primeiro <a> do grupo que contém <img> com URL válida
         img_url = ''
         for a in tags:
             img = a.find('img')
             if img:
-                img_url = img.get('src', img.get('data-src', ''))
+                img_url = _extract_img_url(img)
                 if img_url:
                     break
 
