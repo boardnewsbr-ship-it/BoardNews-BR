@@ -70,7 +70,14 @@ def run():
 
     # ── PRÉ-VENDAS PLAYEASY ───────────────────────────────────
     print("\nProcessando pré-vendas PlayEasy...")
+    seen_pre_sale_links = set()
     for game in raw_pre_sales:
+        # Segurança extra contra duplicatas dentro da mesma execução
+        # (ex: se o mesmo produto vier de mais de uma fonte na raspagem).
+        if game['link'] in seen_pre_sale_links:
+            continue
+        seen_pre_sale_links.add(game['link'])
+
         # Limpa o nome via IA — remove editora e descrição concatenados
         clean_name = generator.extract_game_name(game['name'])
         print(f"-> Nome limpo: '{clean_name}' (original: '{game['name']}')")
@@ -105,7 +112,13 @@ def run():
 
     # ── PROMOÇÕES PLAYEASY ────────────────────────────────────
     print("\nProcessando promoções PlayEasy...")
+    seen_promotion_links = set()
     for game in raw_promotions:
+        # Segurança extra contra duplicatas dentro da mesma execução.
+        if game['link'] in seen_promotion_links:
+            continue
+        seen_promotion_links.add(game['link'])
+
         # Limpa o nome via IA antes de checar duplicidade
         clean_name = generator.extract_game_name(game['name'])
         print(f"-> Nome limpo: '{clean_name}' (original: '{game['name']}')")
