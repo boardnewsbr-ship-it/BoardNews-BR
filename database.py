@@ -74,31 +74,64 @@ def mark_news_as_sent(publisher: str, title: str, url: str):
         conn.close()
 
 
-def is_duplicate_promotion(game_name: str) -> bool:
+def is_duplicate_promotion(game_name: str, discount: int = None) -> bool:
+    """
+    Um item de promoção só é considerado "novo" se:
+      - nunca foi enviado antes, OU
+      - o desconto atual é MAIOR que o melhor desconto já enviado para
+        esse produto (ou seja, é uma oferta genuinamente melhor).
+
+    Sem janela de tempo: o mesmo produto pode reaparecer a qualquer
+    momento, contanto que o desconto tenha melhorado desde o último
+    envio. Isso evita tanto reenviar a mesma oferta de novo (o antigo
+    problema resolvido por essa mudança) quanto perder um desconto
+    realmente maior só porque o produto já foi enviado antes.
+
+    Compara contra o MAIOR desconto já visto entre todos os registros
+    com esse nome normalizado (pode haver mais de um registro histórico
+    com nomes ligeiramente diferentes).
+    """
     conn = get_connection()
     normalized = "".join(c.lower() for c in game_name if c.isalnum())
-    cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
     cursor = conn.cursor()
-    cursor.execute('SELECT game_name FROM sent_promotions WHERE sent_at >= ?', (cutoff,))
+    cursor.execute('SELECT game_name, discount FROM sent_promotions')
     rows = cursor.fetchall()
     conn.close()
-    for (db_name,) in rows:
+
+    best_seen = None
+    for db_name, db_discount in rows:
         if "".join(c.lower() for c in db_name if c.isalnum()) == normalized:
-            return True
-    return False
+            db_discount = db_discount or 0
+            if best_seen is None or db_discount > best_seen:
+                best_seen = db_discount
+
+    if best_seen is None:
+        return False  # nunca visto -- não é duplicado, deve enviar
+
+    if discount is None:
+        # Sem desconto pra comparar (chamada legada) -- mantém
+        # comportamento conservador de "já enviado = duplicado".
+        return True
+
+    return discount <= best_seen
 
 def mark_promotion_as_sent(game_name: str, url: str, price_from: float,
                            price_to: float, discount: int):
     """
-    INSERT OR IGNORE — ID estável baseado no nome normalizado.
-    Não usa INSERT OR REPLACE para não resetar o sent_at (quebraria janela de 30 dias).
+    INSERT OR REPLACE — atualiza o registro existente com o desconto e
+    sent_at mais recentes. Diferente da versão anterior (que usava
+    INSERT OR IGNORE para preservar o sent_at e não quebrar a janela de
+    30 dias), agora a decisão de duplicidade não depende mais de tempo,
+    e sim do valor do desconto (ver is_duplicate_promotion) — então
+    precisamos SEMPRE gravar o desconto mais recente, para que a próxima
+    comparação seja contra o valor certo.
     """
     conn = get_connection()
     normalized = "".join(c.lower() for c in game_name if c.isalnum())
     promo_id = hashlib.md5(normalized.encode()).hexdigest()
     try:
         conn.execute('''
-            INSERT OR IGNORE INTO sent_promotions
+            INSERT OR REPLACE INTO sent_promotions
                 (id, game_name, url, price_from, price_to, discount, sent_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (promo_id, game_name, url, price_from, price_to, discount,
