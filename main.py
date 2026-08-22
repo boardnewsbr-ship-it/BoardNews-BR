@@ -123,8 +123,8 @@ def run():
         clean_name = generator.extract_game_name(game['name'])
         print(f"-> Nome limpo: '{clean_name}' (original: '{game['name']}')")
 
-        if database.is_duplicate_promotion(clean_name):
-            print(f"-> Duplicado (30 dias): '{clean_name}'")
+        if database.is_duplicate_promotion(clean_name, game['discount']):
+            print(f"-> Duplicado (desconto não melhorou): '{clean_name}'")
             continue
 
         bgg_data = enricher.enrich_game_data(clean_name)
