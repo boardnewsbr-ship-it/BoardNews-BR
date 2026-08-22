@@ -39,6 +39,16 @@ def _extract_img_url(img_tag) -> str:
     # do que travar — o e-mail já trata ausência de imagem graciosamente.
     return src
 
+
+def _is_placeholder_image(url: str) -> bool:
+    """Detecta placeholder de lazy-load (ex: 'empty.png' da PlayEasy) ou
+    imagem ausente/base64, usado para decidir qual ocorrência de um
+    produto duplicado vale a pena manter."""
+    if not url:
+        return True
+    low = url.lower()
+    return 'empty.png' in low or low.startswith('data:')
+
 # URL do proxy Cloudflare Workers — configurada via variável de ambiente ou config.json
 # O proxy contorna bloqueios de IP de datacenter em sites como Catarse e Meeple Starter.
 _PROXY_URL = None
@@ -576,30 +586,41 @@ def scrape_meeplestarter(days_window: int = 2) -> list:
         if not name or len(name) < 3:
             continue
 
-        card_text = container.get_text(' ', strip=True).lower()
-        if any(w in card_text for w in ['finalizado', 'encerrado', 'concluído']):
-            print(f"   -> Ignorado (finalizado): '{name}'")
+        # Filtro de status — baseado nos marcadores REAIS confirmados por
+        # inspeção do site (ago/2026), não em palavras-chave genéricas:
+        #   - Campanhas encerradas E canceladas sempre mostram o selo
+        #     "ENCERRADA" no fim do card (cancelada também tem "Cancelado
+        #     em" no lugar de "Começou em").
+        #   - Campanhas "a ser lançado" mostram o botão "Quero ser
+        #     avisado" em vez de valor arrecadado/barra de progresso.
+        #   - Só o que sobra (nem ENCERRADA, nem "a ser lançado") é uma
+        #     campanha realmente ATIVA — inclui tanto as com prazo
+        #     definido (Começou em/Termina em) quanto as "Recorrentes"
+        #     (sem data, tipo assinatura, sempre em aberto).
+        card_text = container.get_text(' ', strip=True)
+        card_text_lower = card_text.lower()
+
+        if 'encerrada' in card_text_lower or 'cancelado em' in card_text_lower:
+            print(f"   -> Ignorado (encerrada/cancelada): '{name}'")
             continue
-        if any(w in card_text for w in ['em breve', 'aguardando']):
-            print(f"   -> Ignorado (não iniciado): '{name}'")
+        if 'quero ser avisado' in card_text_lower:
+            print(f"   -> Ignorado (ainda não iniciada): '{name}'")
             continue
 
         img_tag = container.find('img')
         image = _extract_img_url(img_tag) if img_tag else ''
 
-        end_date   = None
-        start_date = None
-        for tag in container.find_all(['span', 'p', 'div', 'time']):
-            raw    = tag.get('datetime', '') or tag.get_text(strip=True)
-            parsed = _parse_br_date(raw)
-            if parsed:
-                if parsed >= today:
-                    if end_date is None or parsed < end_date:
-                        end_date = parsed
-                else:
-                    if start_date is None or parsed > start_date:
-                        start_date = parsed
+        # Extrai a data pelo RÓTULO explícito ("Começou em"/"Termina em"),
+        # não por heurística de "data no passado = início" — mais preciso
+        # e evita qualquer ambiguidade com outros rótulos de data no card.
+        start_match = re.search(r'Come[çc]ou em\s*(\d{2}/\d{2}/\d{4})', card_text, re.IGNORECASE)
+        end_match = re.search(r'Termina em\s*(\d{2}/\d{2}/\d{4})', card_text, re.IGNORECASE)
+        start_date = _parse_br_date(start_match.group(1)) if start_match else None
+        end_date = _parse_br_date(end_match.group(1)) if end_match else None
 
+        # Só inclui campanhas iniciadas dentro da janela configurada
+        # (novidade do dia). Campanhas "Recorrentes" não têm data de
+        # início — sempre passam, já que aceitam apoio indefinidamente.
         if start_date and start_date < cutoff:
             print(f"   -> Ignorado (início antigo): '{name}'")
             continue
@@ -739,7 +760,7 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
         'vitrine-inicial', 'my-account', 'cadastro', 'central-do-cliente',
         'empresa', 'como-comprar', 'entrega', 'sacdefeito',
         'trocas-e-devolucoes', 'reposicao-de-pecas-e-componentes',
-        'privacidade',
+        'privacidade', 'sac-playeasy', 'faq-playeasy',
     }
 
     # Agrupa <a> por slug de produto.
@@ -888,8 +909,15 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
             main_prices = []
 
         if mode == 'pre-sale':
-            # Para pré-venda, pega o menor preço dos principais (preço atual)
-            price = main_prices[-1] if main_prices else 0.0
+            # Para pré-venda, pega o menor preço dos principais (preço atual).
+            # Exige preço > 0 — protege contra links institucionais/rodapé
+            # (ex: "SAC Playeasy", "Perguntas Frequentes") que passarem
+            # pelo filtro de NAV_SLUGS sem estarem na lista ainda: um
+            # produto de verdade sempre tem preço, então price=0 é sinal
+            # seguro de que não é um produto.
+            if not main_prices:
+                continue
+            price = main_prices[-1]
             results.append({
                 'name': name, 'link': full_url,
                 'price': price, 'image': img_url,
@@ -925,7 +953,13 @@ def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
     # A PlayEasy migrou de /vitrine/pre-venda.html para /pre-venda (sem
     # extensão .html) e trocou o parâmetro de paginação de ?page= para ?pg=.
     base_url = "https://www.playeasy.com.br/pre-venda"
-    results = []
+    # A PlayEasy tem um widget de destaque embutido no MENU DE NAVEGAÇÃO
+    # (presente em toda página do site, inclusive nas paginadas) que
+    # mostra alguns produtos fixos, muitas vezes sem imagem resolvida —
+    # sem essa deduplicação, esses mesmos produtos seriam capturados de
+    # novo a cada página raspada. Quando o mesmo produto aparece mais de
+    # uma vez, mantemos a ocorrência com imagem válida (não-placeholder).
+    seen = {}
     driver = _get_selenium_driver()
     if not driver:
         print("   -> Selenium indisponível. Pré-vendas ignoradas.")
@@ -946,14 +980,22 @@ def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
             page_results = _parse_playeasy_products(html, mode='pre-sale')
             if not page_results:
                 break
-            results.extend(page_results)
+
+            for item in page_results:
+                slug = item['link'].rstrip('/').split('/')[-1]
+                existing = seen.get(slug)
+                if existing is None:
+                    seen[slug] = item
+                elif (_is_placeholder_image(existing.get('image', '')) and
+                      not _is_placeholder_image(item.get('image', ''))):
+                    seen[slug] = item
     finally:
         try:
             driver.quit()
         except Exception:
             pass
 
-    return results
+    return list(seen.values())
 
 
 # ─────────────────────────────────────────────
@@ -969,7 +1011,11 @@ def scrape_playeasy_promotions(max_pages: int = 20) -> list:
     # A PlayEasy migrou de /promocoes.html para /promocoes (sem extensão
     # .html) e trocou o parâmetro de paginação de ?page= para ?pg=.
     base_url = "https://www.playeasy.com.br/promocoes"
-    results = []
+    # Mesmo motivo da função de pré-vendas: widget de menu presente em
+    # toda página repetiria os mesmos produtos a cada página raspada.
+    # Ao encontrar o mesmo produto de novo, mantemos a ocorrência com
+    # imagem válida (o widget do menu costuma vir sem imagem resolvida).
+    seen = {}
     driver = _get_selenium_driver()
     if not driver:
         print("   -> Selenium indisponível. Promoções ignoradas.")
@@ -991,12 +1037,23 @@ def scrape_playeasy_promotions(max_pages: int = 20) -> list:
             if not page_results:
                 print(f"   -> Nenhum produto na página {page}, parando paginação.")
                 break
-            results.extend(page_results)
-            print(f"   -> Página {page}: {len(page_results)} produtos. Total acumulado: {len(results)}.")
+
+            novos = 0
+            for item in page_results:
+                slug = item['link'].rstrip('/').split('/')[-1]
+                existing = seen.get(slug)
+                if existing is None:
+                    seen[slug] = item
+                    novos += 1
+                elif (_is_placeholder_image(existing.get('image', '')) and
+                      not _is_placeholder_image(item.get('image', ''))):
+                    seen[slug] = item
+            print(f"   -> Página {page}: {len(page_results)} produtos ({novos} novos). "
+                  f"Total acumulado: {len(seen)}.")
     finally:
         try:
             driver.quit()
         except Exception:
             pass
 
-    return results
+    return list(seen.values())
