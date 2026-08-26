@@ -16,6 +16,28 @@ HEADERS = {
 }
 
 
+def _scroll_to_load_images(driver, steps: int = 6, pause: float = 0.8):
+    """
+    Rola a página em incrementos pra disparar o carregamento de imagens
+    lazy-load que só resolvem quando o elemento entra na tela (comum em
+    sites que usam IntersectionObserver em vez de um atributo data-src
+    fixo no HTML). Diferente do scroll infinito do Meeple Starter, aqui
+    a grade da PlayEasy tem altura fixa por página — só precisamos
+    passar por ela uma vez para "acordar" todas as imagens.
+    """
+    try:
+        total_height = driver.execute_script("return document.body.scrollHeight")
+        for i in range(1, steps + 1):
+            y = int(total_height * i / steps)
+            driver.execute_script(f"window.scrollTo(0, {y});")
+            time.sleep(pause)
+        # Volta ao topo — mantém consistência antes de capturar o HTML
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(0.5)
+    except Exception as e:
+        print(f"   -> Aviso: scroll para carregar imagens falhou: {e}")
+
+
 def _extract_img_url(img_tag) -> str:
     """
     Extrai a URL real de uma <img>, priorizando atributos de lazy-loading
@@ -878,9 +900,14 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
         if not name or len(name) < 3:
             continue
 
-        # 3. Preços — filtra parcelas de parcelamento
-        # O link de preço contém texto como "R$ 249,90R$ 232,41-7%À vista no pixou em 5x de R$ 46,48"
-        # Precisamos dos dois primeiros preços (original e promocional), ignorando parcelas
+        # 3. Preços — a PlayEasy mostra, nessa ordem: [preço anterior, só
+        # em promoção] [preço cheio atual] [preço no Pix] [parcelamento,
+        # opcional]. Ex: "de R$ 149,90 R$ 139,90 -7% OFF R$ 130,11 no Pix
+        # ou 2x de R$ 69,95 Sem juros".
+        #
+        # Isolamos cada um explicitamente em vez de só ordenar os valores
+        # por tamanho — extrair "o maior e o menor valor" misturava o
+        # preço do Pix e até o de parcelamento com o preço cheio real.
         price_link_text = ''
         for a in tags:
             t = a.get_text(strip=True)
@@ -894,41 +921,48 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
                 a.get_text() for a in tags if 'R$' in a.get_text()
             )
 
-        # Extrai todos os valores R$ encontrados
-        all_raw_prices = re.findall(r'R\$\s*([\d.,]+)', price_link_text)
-        all_prices = sorted(set(
-            clean_price('R$ ' + p) for p in all_raw_prices
-            if clean_price('R$ ' + p) > 0
-        ), reverse=True)  # maior para menor
+        # 3a. Remove o trecho de parcelamento (ex: "2x de R$ 69,95 Sem
+        # juros") — nunca deve virar preço cheio nem Pix.
+        text_no_installment = re.sub(
+            r'\d+\s*x\s*(?:de\s*)?R\$\s*[\d.,]+(?:\s*sem\s*juros)?',
+            ' ', price_link_text, flags=re.IGNORECASE)
 
-        # Filtra parcelas: remove preços menores que 30% do maior preço
-        if all_prices:
-            max_price = all_prices[0]
-            main_prices = [p for p in all_prices if p >= max_price * 0.30]
-        else:
-            main_prices = []
+        # 3b. Isola o preço do Pix — valor de R$ seguido, a poucos
+        # caracteres de distância, da palavra "pix".
+        pix_match = re.search(r'R\$\s*([\d.,]+)[^R$]{0,15}pix',
+                               text_no_installment, re.IGNORECASE)
+        price_pix = clean_price('R$ ' + pix_match.group(1)) if pix_match else 0.0
+        text_no_pix = text_no_installment
+        if pix_match:
+            text_no_pix = (text_no_installment[:pix_match.start(1)] +
+                            text_no_installment[pix_match.end(1):])
+
+        # 3c. O que sobra são os preços "cheios": o anterior (se
+        # promoção) e o atual — nessa ordem de aparição no texto.
+        full_prices_raw = re.findall(r'R\$\s*([\d.,]+)', text_no_pix)
+        full_prices = [clean_price('R$ ' + p) for p in full_prices_raw]
+        full_prices = [p for p in full_prices if p > 0]
 
         if mode == 'pre-sale':
-            # Para pré-venda, pega o menor preço dos principais (preço atual).
             # Exige preço > 0 — protege contra links institucionais/rodapé
             # (ex: "SAC Playeasy", "Perguntas Frequentes") que passarem
             # pelo filtro de NAV_SLUGS sem estarem na lista ainda: um
             # produto de verdade sempre tem preço, então price=0 é sinal
             # seguro de que não é um produto.
-            if not main_prices:
+            if not full_prices:
                 continue
-            price = main_prices[-1]
+            price = full_prices[-1]
             results.append({
                 'name': name, 'link': full_url,
-                'price': price, 'image': img_url,
+                'price': price, 'price_pix': price_pix, 'image': img_url,
                 'type': 'pre-sale',
             })
 
         elif mode == 'promotion':
-            if len(main_prices) < 2:
+            if len(full_prices) < 2:
                 continue
-            price_from = main_prices[0]   # maior = preço original
-            price_to   = main_prices[-1]  # menor dos principais = preço promocional
+            price_from = full_prices[0]   # preço anterior (cheio, riscado)
+            price_to   = full_prices[-1]  # preço cheio atual (com desconto)
             if price_from <= price_to:
                 continue
             discount = int(round((1 - price_to / price_from) * 100))
@@ -937,6 +971,7 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
             results.append({
                 'name': name, 'link': full_url,
                 'price_from': price_from, 'price_to': price_to,
+                'price_pix': price_pix,
                 'discount': discount, 'image': img_url,
                 'type': 'promotion',
             })
@@ -972,6 +1007,7 @@ def scrape_playeasy_pre_sales(max_pages: int = 2) -> list:
             try:
                 driver.get(url)
                 time.sleep(6)
+                _scroll_to_load_images(driver)
                 html = driver.page_source
             except Exception as e:
                 print(f"   -> Erro Selenium página {page}: {e}")
@@ -1028,6 +1064,7 @@ def scrape_playeasy_promotions(max_pages: int = 20) -> list:
             try:
                 driver.get(url)
                 time.sleep(6)
+                _scroll_to_load_images(driver)
                 html = driver.page_source
             except Exception as e:
                 print(f"   -> Erro Selenium página {page}: {e}")
