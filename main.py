@@ -99,12 +99,13 @@ def run():
             print(f"   -> Usando descrição real da página.")
 
         processed_pre_sales.append({
-            'name':    clean_name,
-            'link':    game['link'],
-            'price':   game['price'],
-            'image':   image,
-            'players': players,
-            'summary': description,
+            'name':      clean_name,
+            'link':      game['link'],
+            'price':     game['price'],
+            'price_pix': game.get('price_pix', 0.0),
+            'image':     image,
+            'players':   players,
+            'summary':   description,
         })
 
         if not dry_run:
@@ -144,6 +145,7 @@ def run():
             'link':       game['link'],
             'price_from': game['price_from'],
             'price_to':   game['price_to'],
+            'price_pix':  game.get('price_pix', 0.0),
             'discount':   game['discount'],
             'image':      image,
             'players':    players,
