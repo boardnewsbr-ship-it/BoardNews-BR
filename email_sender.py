@@ -367,11 +367,14 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
             players_html = f'<div class="item-players">{item["players"]}</div>' if item.get('players') else ''
             image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}" width="200" style="max-width: 200px; max-height: 200px; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; object-fit: contain;"></div>' if item.get('image') else ''
             price_formatted = format_price(item["price"])
-            
+            price_pix = item.get("price_pix") or 0.0
+            pix_html = (f' <span style="color: #38a169;">· {format_price(price_pix)} no Pix</span>'
+                        if price_pix > 0 else '')
+
             html += f"""
                 <div class="item">
                     <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["name"]}</a></h3>
-                    <div class="item-meta">Preço atual: {price_formatted}</div>
+                    <div class="item-meta">Preço atual: {price_formatted}{pix_html}</div>
                     {players_html}
                     {image_html}
                     <div class="item-content">{item["summary"]}</div>
@@ -390,13 +393,16 @@ def build_the_news_html(news_list: list, pre_sales: list, promotions: list,
             image_html = f'<div class="item-image-container"><img class="item-image" src="{item["image"]}" alt="{item["name"]}" width="200" style="max-width: 200px; max-height: 200px; height: auto; border-radius: 8px; border: 1px solid #e2e8f0; object-fit: contain;"></div>' if item.get('image') else ''
             price_from_fmt = format_price(item["price_from"])
             price_to_fmt = format_price(item["price_to"])
-            
+            price_pix = item.get("price_pix") or 0.0
+            pix_html = (f' <span style="color: #38a169;">· {format_price(price_pix)} no Pix</span>'
+                        if price_pix > 0 else '')
+
             html += f"""
                 <div class="item">
                     <h3 class="item-title"><a href="{item["link"]}" target="_blank">{item["name"]}</a></h3>
                     <div class="item-meta">
                         De: <span style="text-decoration: line-through;">{price_from_fmt}</span> 
-                        Por: <span style="color: #2b6cb0; font-size: 16px;">{price_to_fmt}</span>
+                        Por: <span style="color: #2b6cb0; font-size: 16px;">{price_to_fmt}</span>{pix_html}
                         <span class="badge-discount">-{item["discount"]}% OFF</span>
                     </div>
                     {players_html}
