@@ -929,7 +929,12 @@ def _parse_playeasy_products(html: str, mode: str) -> list:
 
         # 3b. Isola o preço do Pix — valor de R$ seguido, a poucos
         # caracteres de distância, da palavra "pix".
-        pix_match = re.search(r'R\$\s*([\d.,]+)[^R$]{0,15}pix',
+        # Janela de 40 caracteres (não 15) — o texto real do site é
+        # "R$ 557,91 à vista com desconto Pix - Pagar.me", com ~23
+        # caracteres entre o valor e a palavra "Pix". O [^R$] garante que
+        # a busca nunca atravessa outro valor R$ no meio do caminho,
+        # então uma janela generosa aqui é segura.
+        pix_match = re.search(r'R\$\s*([\d.,]+)[^R$]{0,40}pix',
                                text_no_installment, re.IGNORECASE)
         price_pix = clean_price('R$ ' + pix_match.group(1)) if pix_match else 0.0
         text_no_pix = text_no_installment
